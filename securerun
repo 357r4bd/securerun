@@ -1,0 +1,2166 @@
+#!/usr/bin/perl -w
+
+# $Revision: 1.136 $ $Date: 2004/03/11 23:47:59 $ $Author: estrade $
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  Project information
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  OPTIONS
+#   -c
+#        clear screen when securerun is activated
+#
+#   -f
+#        supports old style securerun runfile option
+#
+#   -h
+#        specifies the .srhosts.def file that describes the environment
+#        of the machine you are working from.  If not specified, it searches
+#        all the directories listed in your PATH enviromental variable.  It
+#        is best to place this in your home directory and make sure that "~"
+#        is in your path.
+#
+#   -i   interactive mode - asks for user to hit a key whenever a start tag
+#        is encountered - useful for debugging.
+#
+#
+#   -l
+#        allows user to select any host in .srhost.def as their local host;
+#        default is "localhost," and it is specified using the value of the
+#        "name" attribute in the "host" tag.
+#
+#   -o
+#        specify arguments to pass through to the configuration file for
+#        preprocessing; ex -o ARG1=123 -o ARG2=abc will result in $ARG1 and
+#        $ARG2 in the configuration being replaced with 123 and abc
+#        respectively prior to the actual running of the config file
+#
+#   -v
+#        verbose mode
+#
+#   -checkmacro [none|warn|halt]
+#        sets the level and response of unresolved
+#        macros (ex, %VARNAME%); options are none, warn, and halt;
+#        default is none.  !THIS OPTION IS NOT FULLY IMPLEMENTED!
+#
+#   -saverunfile
+#        if set, a copy of the actual run file is dumped in the base
+#        directory.
+#
+#   -dontprocessrunfile
+#        if set, securerun will not process the run file; the run file
+#        is processed for macros by default.
+#
+#   -noenv
+#        doesn't read in environment into %extraOps hash used in macro
+#        processing
+#
+#   -noinput 
+#        disables <input> tag used for interactivity - could break scripts
+#        that depend on user input, but could be useful if run in batch 
+#        defining vars through "-o"
+#
+#   -nosplash
+#        do not display securerun splash message
+#
+#   -showcomments
+#        displays comments during processing - useful for status messages
+#      
+#   -showtext
+#        displays all text detected by HTML::Parser
+#
+#   -version
+#        lists the version number and exits
+#
+#   DEPENDANCIES
+#    Perl 5.6.0+ (+ core modules GetOpts, File), HTML::Parser, ssh, scp
+#
+#    HTML::Parser documentation is at:
+#    http://www.perldoc.com/perl5.6.1/lib/HTML/Parser.html
+#    If it is not installed system wide, install locally, and
+#    utilize environmental variable, PERL5LIB (colon delimited) to point
+#    to the location of the lib.
+#
+#   PLATFORMS
+#    Any thing with Perl 5.6.1 on it ;)
+#
+#   TERMS
+#    Nothing in whole or part can be reproduced until further notice, and
+#    I am not responsible for any damage done to any systems from the use
+#    of this code.
+#
+#   AUTHOR(S)
+#    Original conception and development: 
+#    Brett D. Estrade <estrade@nrlssc.navy.mil>
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+package SECURERUN;
+
+# BEGIN block - always run first
+BEGIN {
+  # Check required modules - Possible location for boot strapping
+  eval "use HTML::Parser";
+  if ($@) {  
+    system('clear');
+print <<"DONE";
+@@~~~
+@@ HTML::Parser not found or not compiled with correct perl...
+@@ Run setup.sh or install HTML::Parser 3.35 manually and add
+@@ the absolute paths to the (HTML::PARSER) blib/lib and
+@@ blib/arch to your PERL5LIB environmental variable...
+@@
+@@ NOTE: when installing HTML::Parser, Makefile.PL needs
+@@ to be run with the same Perl executable that will be
+@@ used to run securerun.pl
+@@
+@@ See In for more information...
+@@~~~
+DONE
+  exit;
+  }
+}
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Includes
+# Be sure that "PERL5LIB" is part of the environmental settings, and contains
+# a colon delimited list of the HTML::Parser modules that are required:
+#  1) (HTML::Parser_Install_Dir)/blib/lib
+#  2) (HTML::Parser_Install_Dir)/blib/arch
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+use 5.005_02;
+use strict;
+use Getopt::Long;  # used to process commandline options
+use Sys::Hostname; # for figuring out hostname
+use File::Copy;    # used in copying
+use File::Path;    # used in making dirs
+use Cwd;           # to get current working directory
+
+#use Data::Dumper;
+$|++;              # turn off buffering
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Constants
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+use constant YES   => 1;
+use constant NO    => 0;
+use constant TRUE  => 1;
+use constant FALSE => 0;
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Version - define version number with CVS keywords for output
+# with "-version" flag
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  my $VERSION = '$Date: 2004/03/11 23:47:59 $ $Revision: 1.136 $';
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Global Variables
+#   Most state variable will be contained inside of the PARSER object,
+#   but some not related to the XML processing will be explicitly scoped
+#   globally.
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  my %SECURERUN = ();
+  # create reference to hash
+  my $SECURERUN = \%SECURERUN;
+  $SECURERUN->{CREATE_DIRS} = 0;   #0 means no, 1 means yes
+  # noise levels!
+  $SECURERUN->{VERBOSE_LEVEL} = 0; #0,1,2,4 - where higher is more verbose
+  # important variables
+  $SECURERUN->{HOSTFILE} = '.srhosts.def';
+  
+  $SECURERUN->{SRTMPDIR} = getTmpName();
+  $SECURERUN->{SRTMPDIR} = "/tmp/.oO0-securerun$SECURERUN->{SRTMPDIR}-0Oo";
+  $SECURERUN->{LOCALHOST} = '';
+  
+  # Used by tags to store attributes
+  my %SCRIPT_ATTS = ();
+  my $SCRIPT_ATTS = \%SCRIPT_ATTS;
+  my %PUTFILE_ATTS = ();
+  my $PUTFILE_ATTS = \%PUTFILE_ATTS;
+  my %RUNFILE_ATTS = ();
+  my $RUNFILE_ATTS = \%RUNFILE_ATTS;
+
+  # Used to store host information from $SECURERUN->{HOSTFILE} file
+  use vars qw(%MYHOSTS $AUTOLOAD);
+  my $MYHOSTS = \%MYHOSTS;
+
+  # Dir creation history array - dir pushed every time mkLocalDir is called
+  my @filesToRemove = ();
+  my $filesToRemove = \@filesToRemove;
+
+  # Global message var
+  my $SYSMSG = '';
+
+  # Used for out of the box operation
+  my $DEFAULT_LOCALHOST = 'localhost';
+
+  # tag definition hash is located in ./tags.pl
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Create PARSER object
+#   Additional elements used to store states during XML processing:
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  my $PARSER = HTML::Parser->new(api_version => 3);
+  $PARSER->xml_mode(1);
+  $PARSER->strict_comment(1);
+  $PARSER->unbroken_text(1);
+  $PARSER->{PUTFILE_FLAG} = 0;
+  $PARSER->{PUTFILE_SKIP_PFILES} = 0;
+  $PARSER->{RUNFILE_FLAG} = 0;
+  $PARSER->{SCRIPT_FLAG} = 0;
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Assign callback handlers to events
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  $PARSER->handler('start' =>\&onStart,'tagname,attr');
+  $PARSER->handler('end' =>\&onEnd,'tagname');
+  $PARSER->handler('text' =>\&onText,'text');
+  $PARSER->handler('comment' =>\&onComment,'text');
+  $PARSER->handler('declaration' => undef);
+  $PARSER->handler('process' => undef);
+  $PARSER->handler('default' => undef);
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Initialization of options, options processing, and input files
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  # Initialize extraOps with environmental variables
+  my $noenv = 0; 
+  my %extraOps = ();
+  my $extraOps = \%extraOps;
+  # add defaults
+  addToExtraOps('PROCID',$$);
+  addToExtraOps('STDOUT','');
+
+  #
+  # Options defaults
+  #
+
+  my %CMDLINEOPTS = ();
+  my $CMDLINEOPTS = \%CMDLINEOPTS;
+  $CMDLINEOPTS->{CHECKMACRO} = 'none';
+  $CMDLINEOPTS->{SAVERUNFILE} = '';
+  $CMDLINEOPTS->{NOSPLASH} = 0;
+  $CMDLINEOPTS->{NOINPUTTAG} = 0;
+  $CMDLINEOPTS->{SHOWCOMMENTS} = 0;
+  $CMDLINEOPTS->{SHOWTEXT} = 0;
+  $CMDLINEOPTS->{SHOWVERSION} = 0;
+  $CMDLINEOPTS->{CLEAR} = 0;
+  $CMDLINEOPTS->{DONTPROCESSRUNFILE} = 0;
+  $CMDLINEOPTS->{INTERACTIVE} = 0;
+
+  my $v = 0;
+
+  GetOptions("c"                  => \$CMDLINEOPTS->{CLEAR},
+             "f=s"                => \$SECURERUN->{RUNFILE},
+             "h=s"                => \$SECURERUN->{HOSTFILE},
+	     "i"                  => \$CMDLINEOPTS->{INTERACTIVE},
+             "l=s"                => \$SECURERUN->{LOCALHOST},
+             "o=s"                => \%extraOps,
+             "v"                  => \$v,
+             "checkmacro=s"       => \$CMDLINEOPTS->{CHECKMACRO},
+             "saverunfile=s"      => \$CMDLINEOPTS->{SAVERUNFILE},
+	     "dontprocessrunfile" => \$CMDLINEOPTS->{DONTPROCESSRUNFILE},
+	     "noenv"              => \$noenv,
+             "noinput"            => \$CMDLINEOPTS->{NOINPUTTAG},
+	     "nosplash"           => \$CMDLINEOPTS->{NOSPLASH},
+             "showcomments"       => \$CMDLINEOPTS->{SHOWCOMMENTS},
+	     "showtext"           => \$CMDLINEOPTS->{SHOWTEXT},
+             "version"            => \$CMDLINEOPTS->{SHOWVERSION},
+             );
+
+  # Add %ENV into %extraOps  
+  if ($noenv eq 0) {
+    %extraOps = (%extraOps, %ENV);
+  } else {
+    $SYSMSG = "WARNING: ENVIRONMENTAL variables not included in %extraOps (used in macro procession)";
+    showIfVerbose($SYSMSG,1); 
+  }
+  
+  #
+  # AUTOLOAD - catch all subroutine - handle or die gracefully
+  #
+
+  sub AUTOLOAD {
+    print "WARNING: $AUTOLOAD doesn't exist as a subrouting here.\n";
+    return;
+  }
+
+  #
+  # Initialization subroutine
+  #
+
+  sub init {
+    #
+    # Clear terminal screen option
+    #
+
+    if ($CMDLINEOPTS->{CLEAR}) {
+      system('clear');
+    }
+
+    #
+    # Prints version
+    #
+
+    if ($CMDLINEOPTS->{SHOWVERSION}) {
+      print "$VERSION \n\n";
+      exit 0;
+    }
+
+    #
+    #  Prints text splash by default
+    #
+
+    if (!$CMDLINEOPTS->{NOSPLASH}) {
+      my $parserVersion = HTML::Parser->VERSION;
+      print "@@~~~\n@@ securerun: [Parent PROCID: $$]\n@@ $VERSION\n@@ Perl $]\n@@ HTML::Parser $parserVersion\n@@~~~\n\n";
+    }
+
+    #
+    # Look for .rshost.def if not defined; looks through dirs in PATH
+    #
+
+    if (! -e $SECURERUN->{HOSTFILE}) {
+      # see if environmental variable, SECURERUN_HOST_DEF, is set
+      my $tmpfile = '';
+      if (defined($ENV{SECURERUN_HOST_DEF})) {
+        $tmpfile = $ENV{SECURERUN_HOST_DEF};
+      }
+      if (-e $tmpfile) {
+        $SECURERUN->{HOSTFILE} = $tmpfile;
+      } else {
+        # if SECURERUN_HOST_DEF is not set, search path
+        for my $path (split(":",$ENV{PATH})) {
+          # file must exist, be readable by user, and be a text file (as opposed to
+          # a binary file)
+          if (-e "$path/$SECURERUN->{HOSTFILE}") {
+            $SECURERUN->{HOSTFILE} = "$path/$SECURERUN->{HOSTFILE}";
+            $SYSMSG = "Found $SECURERUN->{HOSTFILE}! ...\n";
+            showIfVerbose($SYSMSG,1);
+            last;
+          }
+        }
+      }
+    }
+    
+    #
+    #  Confirm host definition file exists and read in
+    #
+
+    if (-e $SECURERUN->{HOSTFILE}) {
+      #  !! POTENTIAL SECURITY VULNERABILITY
+      #  !! Should validate that this is just an hash !!
+      require $SECURERUN->{HOSTFILE};
+    } else {
+      print "HALT: $SECURERUN->{HOSTFILE} file not found ...\n";
+      exit;
+    }
+
+    #
+    #  Determine if $SECURERUN->{LOCALHOST} is defined;
+    #  if it is, return hash record name, if
+    #  not, return -1
+    #
+
+    chomp($SECURERUN->{LOCALHOST});
+    &setLocalhost();    
+    addToExtraOps('LOCALHOST',$SECURERUN->{LOCALHOST});
+
+    # untested xp solution to getting interactive input on windows.
+    if($^O eq 'MSWin32') {
+	open(TTY, "CON") or die $!;
+    } else {
+	open(TTY, "</dev/tty") or die $!;
+    }
+
+    
+    showCallerInfo(caller());
+    return;
+  } # end sub init
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# System helper functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub isLocalDir {
+    my($dir) = @_;
+    my $retval = 0;
+    if (-d $dir) {
+      $retval = 1;
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  sub isLocalFile {
+    my($file) = @_;
+    my $retval = 0;
+    if (-e $file && -f $file) {
+      $retval = 1;
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  sub ensureLocalDir {
+    my($dir,$mode) = @_;
+    my $retval = 0;
+    if ($SECURERUN->{CREATE_DIRS} eq 1) {
+      # mkdir if $dir doesn't exist or if $dir is not a directory
+      if (!-e $dir) {
+        $retval = mkpath($dir,0,$mode) || die $!;
+      } elsif (!-d $dir) {
+        rmtree ($dir,0,0);
+        $retval = mkpath($dir,0,$mode) || die $!;
+      } else {
+      my $pwd = getcwd;
+        $SYSMSG = "WARNING: $dir already exists; Directory not removed \nCommand issued while in $pwd...\n";
+        showIfVerbose($SYSMSG,2);
+      }
+    } else {
+      warn "WARNING: Could not create $dir because \"-create_dirs\" not set to 1...\n";
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  sub touchFile {
+    my($file) = @_;
+    open(TMP,">$file") || die $!;
+      print TMP '';
+    close(TMP);
+    showCallerInfo(caller());
+    return;
+  }
+
+  # set up for UNIX paths
+  sub getParentPath {
+    my $path = $_[0];
+    my @filePathArray = split("/",$path);
+    # discard last member
+    pop(@filePathArray);
+    showCallerInfo(caller());
+    return join("/",@filePathArray);
+  }
+
+  # set up for UNIX paths
+  sub getLastPathMember {
+    my $path = $_[0];
+    my @filePathArray = split("/",$path);
+    showCallerInfo(caller());
+    return pop(@filePathArray);
+  }
+
+  # cd to BASEDIR
+  sub cdCwdToBASEDIR {
+    chdir $SECURERUN->{BASEDIR} || die $!;
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub cdCwdToDir {
+    my($dir) = $_[0];
+    if (!-d $dir) {
+      print "HALT: $dir doesn't exist or is not a directory!...\n";
+      exit;
+    } else {
+      chdir $dir || die $!;
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  # checks to see if file is a directory or if it exists
+  sub prepForNewFile {
+    my($filepath) = $_[0];
+    if (-d $filepath) {
+      print "HALT: $filepath exists and IS a directory, not a file!...\n";
+      exit;
+    } elsif (-e $filepath) {
+      unlink $filepath
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub getTmpName {
+    return '.'.rand(time()*rand());
+  }
+
+  #
+  # getFirstLineFromFile
+  # ...removes shebang line and returns it as the INTERP
+  # to use when running - has potential to be misused!
+  #
+
+  sub getFirstLineFromFile {
+    my($file) = @_;
+    my $line;
+    my $filecontent;
+    open(TMPFILE,"<$file");
+    # get interp path from shebang it is there
+    while (<TMPFILE>) {
+      $line = $_;
+      last;
+    }
+    close(TMPFILE);
+    showCallerInfo(caller());
+    return $line;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Runtime preference processing functions
+#  For each valid runtime preference setting, there must be a corresponding
+#  subrouting to handle it.
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub processPrefs {
+    my $prefs = $SECURERUN->{PREFS};
+    chomp($prefs);
+    $prefs =~ s/\n|\s|\r//g;
+    my @prefsArray = split(';',$prefs);
+    for (my $i=0; $i < scalar(@prefsArray); $i++) {
+      $prefsArray[$i] =~ s/-/pref_/g;
+      my @subname = split(':',$prefsArray[$i]);
+      $prefsArray[$i] =~ s/:/('/g;
+      $prefsArray[$i] =~ s/$/')/g;
+      eval "$prefsArray[$i]";
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub pref_create_dirs {
+    my($level) = @_;
+    if ($level =~ m/[01]/) {
+      $SECURERUN->{CREATE_DIRS} = $level;
+    }
+    $SYSMSG = "SET: create_dirs to $level\n";
+    showIfVerbose($SYSMSG,4);
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub pref_verbose_level {
+    my($level) = @_;
+    if ($level =~ m/[0124]/) {
+      $SECURERUN->{VERBOSE_LEVEL} = $level;
+    }
+    $SYSMSG = "SET: on_verbose_level to $level\n";
+    showIfVerbose($SYSMSG,4);
+    showCallerInfo(caller());
+    return;
+  }
+
+  # example added sub ...
+  #sub on_test {
+  #  print "CALLED: on_test @_ \n";
+  #}
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Logging and messaging functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  #
+  # showIfVerbose($message,$verboseFlag)
+  # Displays $message if $verboseFlag is true
+  #
+
+  sub showIfVerbose {
+    my($msg,$level) = @_;
+    if ($SECURERUN->{VERBOSE_LEVEL} >= $level) {
+      # parameter assignment
+      if ($msg !~ m/^$/) {
+        chomp($msg);
+        print "$msg\n";
+      }
+    }
+    # DO NOT PUT showCallerInfo() here!
+    $SYSMSG = '';
+    showCallerInfo(caller());
+    return;
+  }
+
+  #
+  #  Output function caller info for debugging at
+  #  the highest verbose level
+  #  This function must be called like:
+  #  &showCallerInfo;
+  #
+
+  sub showCallerInfo {
+    my(@callerInfo) = @_;
+    my $callerInfo = \@callerInfo;
+    if ($SECURERUN->{VERBOSE_LEVEL} >= 4) {
+     my $pwd = getcwd;
+     print "+-----DEBUG-----+\n";
+     print "Called from $callerInfo[1] on line $callerInfo[2]\n";
+     print "Current working directory is $pwd\n";
+    }
+    # DO NOT PUT showCallerInfo() here!
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Macro parsing
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  # heart of macro processing for strings
+  sub preProcessStr {
+    my($string,%options) = @_;
+    my $options = \%options;
+    $SYSMSG = "Processing macros (preProcessStr)...\n";
+    showIfVerbose($SYSMSG,2);
+    $string =~ s/%([_a-zA-Z0-9\.-]+?)%/exists($options{$1}) ? $options{$1} : "%$1%"/ge;
+    checkForMacros($string);
+    showCallerInfo(caller());
+    return $string;
+  }
+
+  sub preProcessFile {
+    my($file,%options) = @_;
+    # ensure file is a text file, ie, not binary
+    if (-T $file) {
+      $SYSMSG = "Processing macros in $file...\n";
+      showIfVerbose($SYSMSG,2);
+      # Build string containing file txt (include control chars)
+      my $FILETXT = '';
+      open(INFILE, "<$file") || die "Cannot open $file for reading: $!";
+      while (<INFILE>) {
+        $FILETXT .= $_;
+      }
+      close INFILE || die "Cannot close filename: $!";
+      # Replace macros in string with %options hash
+      $FILETXT = preProcessStr($FILETXT,%options);
+      # Replace file!!
+      prepForNewFile($file);
+      open(OUTFILE, ">$file") || die "Cannot open $file for writing: $!";
+        print OUTFILE $FILETXT;
+      close(OUTFILE);
+    } else {
+      $SYSMSG = "WARNING: $file is not a text file, so macros can not be processed...\n";
+      showIfVerbose($SYSMSG,1);
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  # pre processes file, then outputs to a tmp file.  Returns new file path
+
+  sub getTmpPreProcessedFile {
+    my($file,%options) = @_;
+    my $tmpSrcFile = '';
+    if (-r $file) {
+      # suck file content into string and process macros
+      my $filecontent = txtFileToString($file);
+      # Process macros in tmp local file
+      $filecontent = preProcessStr($filecontent,%options);
+      # dump file contents to tmp file
+      my $tmpname = getTmpName();
+      chomp($tmpname);
+      $tmpSrcFile = "$SECURERUN->{SRTMPDIR}/$tmpname";
+      # send file to remote host
+      open(DUMP,">$tmpSrcFile") || die $!;
+        print DUMP $filecontent;
+      close(DUMP);
+    }
+    return $tmpSrcFile;
+  }
+
+  sub checkForMacros {
+    my($txtToCheck) = $_[0];
+    ## Check for left over macros
+    if ($CMDLINEOPTS->{CHECKMACRO} eq "warn" || $CMDLINEOPTS->{CHECKMACRO} eq "halt") {
+      if ($txtToCheck =~ m/(%[a-zA-Z0-9]*%)/) {
+        if ($CMDLINEOPTS->{CHECKMACRO} eq "warn") {
+          warn "WARNING: Undefined macro detected: $1...\n";
+        } elsif ($CMDLINEOPTS->{CHECKMACRO} eq "halt") {
+          print "HALT: Undefined macro detected: $1...\n";
+          exit;
+        }
+      }
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub addToExtraOps {
+    my($varName,$value) = @_;
+    # also replaces hash element if assigned already
+    $extraOps->{$varName} = $value;
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub removeFromExtraOps {
+    my($varName) = @_;
+    if (defined($extraOps->{$varName})) {
+      # remove from hash
+      delete($extraOps->{$varName});
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub txtFileToString {
+    my($file) = $_[0];
+    my $retstr = '';
+    if (-e $file && -T $file) {
+      open(TMPFILE,"<$file");
+        while(<TMPFILE>) {
+          $retstr .= $_;
+        }
+      close(TMPFILE);
+    } else {
+      warn "WARNING: $file either doesn't exist or is not a text file..\n";
+    }
+    return $retstr;
+  }
+
+  sub dumpFileContent {
+    my($content,$file) = @_;
+    open(TMPFILE,">$file") || die $!;
+      print TMPFILE $content;
+    close(TMPFILE);
+    return;
+  }
+
+  # parse "cmd" used in <runfile> and <define>
+
+  sub createCmd {
+    my($interp,$file) = @_;
+    # %i = interp
+    # %a = args
+    # %f = file
+    chomp($interp,$file);
+    my %srcFileHash = parseDirPath($RUNFILE_ATTS->{file});
+    my $srcFileHash = \%srcFileHash;
+    my $cmd = $RUNFILE_ATTS->{cmd};
+    $cmd =~ s/%a/$RUNFILE_ATTS->{args}/g;
+    $cmd =~ s/%f/$file/g;
+    $cmd =~ s/%i/$interp/g;
+    $SYSMSG = "Created command:'$cmd'\n";
+    showIfVerbose($SYSMSG,2);
+    return $cmd;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Validation functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  # experimental generic attribute validation scheme
+  sub validateAttributes {
+    my(%AttDef,@attributes) = @_;
+    # to be implemented soon
+
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub validatePipe {
+    my($pipe,$default) = @_;
+    if (defined($pipe)) {
+      chomp($pipe);
+      if  ($pipe !~ m/[|]?|[<]{0,2}|[>]{0,2}/) {
+        warn "WARNING: illegal pipe symbol detected ... reset to null string ...\n";
+        $pipe = '';
+      }
+    } else {
+      $pipe = $default;
+    }
+    showCallerInfo(caller());
+    return $pipe;
+  }
+
+  sub validateWait {
+    my($wait) = @_;
+    if (defined($wait)) {
+      chomp($wait);
+      if ($wait !~ m/^[0-9]*$/) {
+        $wait = 0;
+      }
+    } else {
+      $wait = 0;
+    }
+    showCallerInfo(caller());
+    return $wait;
+  }
+
+  sub validateYesNo {
+    my($yesNo,$default) = @_;
+    if (defined($yesNo)) {
+      chomp($yesNo,$default);
+      if ($yesNo =~ m/^[nN][oO]$/ || $yesNo =~ m/^[nN]$/ || $yesNo eq 0) {
+        $yesNo = "NO";
+      } elsif ($yesNo =~ m/^[yY][eE][sS]$/ || $yesNo =~ m/^[yY]$/ || $yesNo eq 1) {
+        $yesNo = "YES";
+      } else {
+        $yesNo = $default;
+      }
+    } else {
+      $yesNo = $default;
+    }
+    showCallerInfo(caller());
+    return $yesNo;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# host info functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  #
+  #  gets interpretor information from %MYHOSTS
+  #
+
+  sub getInterpInfo {
+    my($host,$interp) = @_;
+    chomp($host,$interp);
+    my $hostrecord = getHostRecordName($host);
+    my %rethash = ();
+    my $rethash = \%rethash;
+    $rethash->{VALID} = 0;
+    if ($hostrecord ne -1) {
+      # get interp
+      for my $interplist (@{$MYHOSTS{$hostrecord}{INTERP}}) {
+        if ($interp eq $interplist->{alias}) {
+          $rethash->{BIN} = $interplist->{bin};
+          $rethash->{FLAGS} = $interplist->{flags};
+	  $rethash->{DEFAULT_CMD} = $interplist->{default_cmd};
+          $rethash->{VALID} = 1;
+          # break out of for loop
+          last;
+        }
+      }
+    }
+    showCallerInfo(caller());
+    return %rethash;
+  }
+
+  # ensure interp if listed in securerun.ini for host in $rundir
+  sub isValidInterp {
+    my($interp,$rundir) = @_;
+    chomp($interp,$rundir);
+    my $isLocal = isLocal($rundir);
+    my $host = '';
+    my $retval = 0;
+    if ($isLocal eq 1) {
+      $host = $SECURERUN->{LOCALHOST};
+    } elsif ($isLocal eq 0) {
+      my %hostHash = parseDirPath($rundir);
+      my $hostHash = \%hostHash;
+      $host = $hostHash->{HOST};
+    } else {
+      $retval = -1;
+    }
+    if ($retval ne -1) {
+      my %interpHash = getInterpInfo($host,$interp);
+      my $interpHash = \%interpHash;
+      $retval = $interpHash->{VALID};
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  #
+  # returns hash of dir path elements including
+  # username, host, and ssh/scp port to use
+  #
+
+  sub parseDirPath {
+    my($path) = @_;
+    my %rethash = ();
+    my $rethash = \%rethash;
+    $rethash->{VALID} = 0;
+    # This crazy regex parses out path info, including remote host stuff
+    # using the format user@host#port:/path - the only thing required is "/path"
+    if ($path =~ m/(((^[%\D0-9]*)(@))?([%_a-zA-Z0-9\.-]*)((#)([%\D0-9]*))?(:))?([%\D0-9]*)/i) {
+      $rethash->{USERNAME} = $3;
+      $rethash->{HOST} = $5;
+      $rethash->{PORT} = $8;
+      $rethash->{PATH} = $10;
+      $rethash->{VALID} = 1;
+    }
+    if (!defined($rethash->{USERNAME})) {
+      # If not defined, ensure null string
+      $rethash->{USERNAME} = '';
+    }
+    if (!defined($rethash->{PORT})) {
+      # If not defined, use default secure shell port
+      $rethash->{PORT} = 22;
+    }
+    if (!defined($rethash->{PATH})) {
+      # If not defined, default to remote home dir
+      $rethash->{PATH} = '~';
+    }
+    showCallerInfo(caller());
+    return %rethash;
+  }
+
+  #
+  #  Fundemental host file query
+  #  returns HRN given an IP addr or alias
+  #
+
+  sub getHostRecordName {
+    my($aliasOrIP) = $_[0];
+    my $hostname = -1;
+    foreach my $hostrecord (keys %MYHOSTS) {
+      for my $namelist (@{$MYHOSTS{$hostrecord}{HOSTINFO}}) {
+        if ($aliasOrIP eq $namelist->{name} || $aliasOrIP eq $namelist->{ipaddress}) {
+          $hostname = $hostrecord;
+          # break out of for loop
+          last;
+        }
+      }
+      if ($hostname ne -1) {
+        # break out of foreach loop and return $found
+        last;
+      }
+    }
+    showCallerInfo(caller());
+    return $hostname;
+  }
+
+  #
+  #  Fundemental host file query
+  #  returns IP addr given an IP addr or alias
+  #
+
+  sub getIPAddress {
+    my($aliasOrIP) = $_[0];
+    my $ipaddress = -1;
+    foreach my $hostrecord (keys %MYHOSTS) {
+      for my $namelist (@{$MYHOSTS{$hostrecord}{HOSTINFO}}) {
+        if ($aliasOrIP eq $namelist->{name} || $aliasOrIP eq $namelist->{ipaddress}) {
+          $ipaddress = $namelist->{ipaddress};
+          # break out of for loop
+          last;
+        }
+      }
+      if ($ipaddress ne -1) {
+        # break out of foreach loop and return $found
+        last;
+      }
+    }
+    showCallerInfo(caller());
+    return $ipaddress;
+  }
+
+  #
+  #  Determines if host is in def file giben IP addr, alias, or HRN
+  #
+
+  sub isInHostFile {
+    my($aliasOrIP) = $_[0];
+    my $retval = 0;
+    if (defined($MYHOSTS{$aliasOrIP})) {
+      $retval = 1;
+    } elsif (getIPAddress($aliasOrIP) ne -1) {
+      $retval = 1;
+    } elsif (getHostRecordName($aliasOrIP) ne -1) {
+      $retval = 1;
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  #
+  # attempts to figure out if $path is on localhost
+  #
+
+  sub isLocal {
+    my($path) = $_[0];
+    my $retval = 0;
+    if (defined($path)) {
+      my %hostHash = parseDirPath($path);
+      my $hostHash = \%hostHash;
+      if (defined($hostHash->{HOST})) {
+        if (isInHostFile($hostHash->{HOST})) {
+          my $ip1 = getIPAddress($SECURERUN->{LOCALHOST});
+          my $ip2 = getIPAddress($hostHash->{HOST});
+          if ($ip1 eq $ip2) {
+            $retval = 1;
+          }
+        } else {
+          # indicates host that is not in host file
+          $retval = -1;
+        }
+      } else {
+        # Assuming that if $hostHash->{HOST} doesn't exist, it is localhost syntax
+        $retval = 1;
+      }
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  #
+  # Actually runs isLocal and inverses result unless "-1" indicating that it is not in .srhost.def
+  #
+
+  sub isRemote {
+    my($path) = @_;
+    my $retval = 0;
+    my $isLocalVal = isLocal($path);
+   if ($isLocalVal eq 1) {
+     $retval = 0;
+   } elsif ($isLocalVal eq 0) {
+     $retval = 1;
+   } else {
+     $retval = $isLocalVal;
+   }
+   return $retval;
+  }
+
+  #
+  #  Set localhost for run
+  #
+
+  sub setLocalhost {
+    my($fullnetname,$alias);
+    if ($SECURERUN->{LOCALHOST} =~ m/^$/) {
+      ($fullnetname,$alias) = gethostbyname(hostname());
+    } else {
+      $fullnetname = $SECURERUN->{LOCALHOST};
+      $alias = $SECURERUN->{LOCALHOST};
+    }
+    # first try fullnetname
+    my $tmpgetip = getIPAddress($fullnetname);
+    if ($tmpgetip eq -1) {
+      # if that fails, try alias
+      $tmpgetip = getIPAddress($alias);
+      if ($tmpgetip eq -1) {
+        # if that fails, try $DEFAULT_LOCALHOST
+        $tmpgetip = getIPAddress($DEFAULT_LOCALHOST);
+        if ($tmpgetip eq -1) {
+          print "HALT: Specified localhost, \"$fullnetname\", not in $SECURERUN->{HOSTFILE} ...\n";
+          exit;
+        }
+      }
+    }
+
+    # if it works, assign ip address to LOCALHOST
+    $SECURERUN->{LOCALHOST} = $tmpgetip;
+
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# SSH/SCP wrappers and run file helper functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  #
+  # execViaSSH($hostIPAddress,$hostHash->{USERNAME},$hostHash->{PORT},$cmd)
+  #   executes a remote command via ssh
+  #
+
+  sub execViaSSH {
+    my($host,$user,$port,$cmd) = @_;
+    my $retval = '';
+    my %sshHash = getInterpInfo($SECURERUN->{LOCALHOST},"SSH");
+    my $sshHash = \%sshHash;
+    # Create $hoststr, ie, user@host...
+    my $hoststr = '';
+    if ($user !~ m/^$/) {
+      $hoststr = "$user\@$host";
+    } else {
+      $hoststr = "$host";
+    }
+    # NEED TO GET STDOUT AND STDERR BACK - how?!
+    if ($sshHash->{VALID} eq 1) {
+      if (-x $sshHash->{BIN}) {
+        $SYSMSG = "Attemping to execute remote command(s) using connect string \"$hoststr\":\n  $cmd\n";
+	showIfVerbose($SYSMSG,1);
+        $retval = qx($sshHash->{BIN} -p $port $sshHash->{FLAGS} $hoststr $cmd);
+      } else {
+        print "HALT: ssh not valid on localhost - does $sshHash->{BIN} exist?\n";
+        exit;
+      }
+    } else {
+      print "HALT: ssh not valid on $SECURERUN->{LOCALHOST}\n";
+      exit;
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  # getViaSCP($scpExe,$hostFilePath,$localPath)
+  #   gets a remote file via scp
+  #
+
+  sub getViaSCP {
+    my($host,$user,$port,$rmtFile,$localPath) = @_;
+    my($retval,$usrstr);
+    my %scpHash = getInterpInfo($SECURERUN->{LOCALHOST},"SCP");
+    my $scpHash = \%scpHash;
+    # Create $hoststr, ie, user@host...
+    my $hoststr = '';
+    if ($user !~ m/^$/) {
+      $hoststr = "$user\@$host";
+    } else {
+      $hoststr = "$host";
+    }
+    # NEED TO GET STDOUT AND STDERR BACK - how?!
+    if ($scpHash->{VALID} eq 1) {
+      if (-x $scpHash->{BIN}) {
+        $SYSMSG = "Attemping to get file(s) using connect string \"$hoststr\":\n $rmtFile \n";
+	showIfVerbose($SYSMSG,1);
+        $retval = qx($scpHash->{BIN} -P $port $scpHash->{FLAGS} $hoststr:$rmtFile $localPath);
+      } else {
+        print "HALT: scp not valid on localhost - does $scpHash->{BIN} exist?\n";
+        exit;
+      }
+    } else {
+      print "HALT: scp not valid on $SECURERUN->{LOCALHOST}\n";
+      exit;
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+  #
+  # putViaSCP($host,$user,$port,$localFile,$rmtPath)
+  #   puts a local file on a remote machine via scp
+  #
+
+  sub putViaSCP {
+    my($host,$user,$port,$localFile,$rmtPath) = @_;
+    my($retval,$usrstr);
+    my %scpHash = getInterpInfo($SECURERUN->{LOCALHOST},"SCP");
+    my $scpHash = \%scpHash;
+    # Create $hoststr, ie, user@host...
+    my $hoststr = '';
+    if ($user !~ m/^$/) {
+      $hoststr = "$user\@$host";
+    } else {
+      $hoststr = "$host";
+    }
+    # NEED TO GET STDOUT AND STDERR BACK - how?!
+    if ($scpHash->{VALID} eq 1) {
+      if (-x $scpHash->{BIN}) {
+        $SYSMSG = "Attemping to put local file(s) to remote path $rmtPath using connect string \"$hoststr\":\n $localFile \n";
+	showIfVerbose($SYSMSG,1);
+        $retval = qx($scpHash->{BIN} -P $port $scpHash->{FLAGS} $localFile $hoststr:$rmtPath);
+      } else {
+        print "HALT: scp not valid on localhost - does $scpHash->{BIN} exist?\n";
+        exit;
+      }
+    } else {
+      print "HALT: scp not valid on $SECURERUN->{LOCALHOST}\n";
+      exit;
+    }
+    showCallerInfo(caller());
+    return $retval;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  <securerun> state support functions -- ROOT tag!
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub securerunTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    # Record directory securerun was executed from
+    $SECURERUN->{INITIALDIR} = getcwd;;
+    chomp($SECURERUN->{INITIALDIR});
+    if (exists($attributes->[0]{prefs})) {
+      $SECURERUN->{PREFS} = $attributes->[0]{prefs};
+      processPrefs();
+    } else {
+      $SECURERUN->{PREFS} = '';
+    }
+    if (exists($attributes->[0]{name})) {
+      $SECURERUN->{NAME} = $attributes->[0]{name};
+    } else {
+      $SECURERUN->{NAME} = "securerun.$$";
+    }
+    # basedir
+    if (exists($attributes->[0]{basedir})) {
+      ensureLocalDir(qq($attributes->[0]{basedir}),0755);
+      $SECURERUN->{BASEDIR} = Cwd::realpath(qq($attributes->[0]{basedir}));      
+      chomp($SECURERUN->{BASEDIR});
+    } else {
+      # Assume basedir is current one, and assign via absolute path
+      $SECURERUN->{BASEDIR} = getcwd;;
+      chomp($SECURERUN->{BASEDIR});
+    }
+    # Add STARTDIR to default - i.e. the cwd where securerun is executed (not necessarily the BASEDIR!)
+    addToExtraOps('STARTDIR',getcwd());
+    # Add basedir to %extraOps
+    addToExtraOps('BASEDIR',$SECURERUN->{BASEDIR});
+
+    # SRTMPDIR
+    if (exists($attributes->[0]{tmpdir})) {
+      ensureLocalDir(qq($attributes->[0]{tmpdir}),0755);
+      $SECURERUN->{SRTMPDIR} = Cwd::realpath(qq($attributes->[0]{tmpdir}));      
+      chomp($SECURERUN->{SRTMPDIR});
+    } # default is set at the top
+    # Add SRTMPDIR to %extraOps
+    addToExtraOps('SRTMPDIR',$SECURERUN->{SRTMPDIR});
+
+    # logfile
+    $SECURERUN->{LOGFILE} = "$SECURERUN->{BASEDIR}/securerun.$$.log";
+    # Add logdir to %extraOps
+    addToExtraOps('LOGFILE',$SECURERUN->{LOGFILE});    
+    
+    # Change to $SECURERUN->{BASEDIR} to start the show
+    cdCwdToBASEDIR();
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub securerunTagEnd {
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# <putfile>/<pfile> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub putfileTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    # Block "put" attribute - if NO, set $PARSER->{PUTFILE_FLAG} = 0 so entire block is ignored
+    if (validateYesNo($attributes->[0]{put},'YES') eq 'YES') {
+      $PARSER->{PUTFILE_FLAG} = 1;
+      $PARSER->{PUTFILE_SKIP_PFILES} = 0;
+      if (defined($attributes->[0]{dir})) {
+        $PUTFILE_ATTS->{dir} = qq($attributes->[0]{dir});
+        my $isLocal = isLocal($PUTFILE_ATTS->{dir});
+        if ($isLocal eq 1) {
+          # Store that it is local for entire <putfile> block
+          $PUTFILE_ATTS->{localOrRemote} = 'local';
+          $SYSMSG = "$PUTFILE_ATTS->{dir} is local and valid...\n";
+          showIfVerbose($SYSMSG,2);
+        } elsif ($isLocal eq 0) {
+          # Store that it is local for entire <putfile> block
+          $PUTFILE_ATTS->{localOrRemote} = 'remote';
+          $SYSMSG = "$PUTFILE_ATTS->{dir} is remote and valid...\n";
+          showIfVerbose($SYSMSG,2);
+        } elsif ($isLocal eq -1) {
+          print "HALT: $PUTFILE_ATTS->{dir} is not a valid file destination...\n";
+          exit;
+        }
+      } else {
+        print "HALT: <putfile> destination directory not defined!...\n";
+        exit;
+      }
+      # Wait attribute
+      sleep validateWait($attributes->[0]{wait});
+    } else {
+      # set $PARSER->{PUTFILE_FLAG} = 0 so <pfile> stuff is ignored...
+      $PARSER->{PUTFILE_FLAG} = 0;
+      $PARSER->{PUTFILE_SKIP_PFILES} = 1;
+      $SYSMSG = "WARNING: Ignoring <putfile> block because <putfile put=\"NO\"> was detected...\n";
+      showIfVerbose($SYSMSG,2);
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub putfileTagEnd {
+    # Reset flags and global putfile tag attribute hash
+    $PARSER->{PUTFILE_FLAG} = 0;
+    $PARSER->{PUTFILE_SKIP_PFILES} = 0;
+    # reset global attributes hash
+    %PUTFILE_ATTS = ();
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub pfileTagStart {
+    my(@attributes) = $_[0];
+    my $attributes = \@attributes;
+    my $skip = 0;
+    my $standalone = 0;
+    if ($PARSER->{PUTFILE_SKIP_PFILES} eq 0) {
+      if ($PARSER->{PUTFILE_FLAG} ne 1) {
+	# validates dir attribute
+	putfileTagStart(@attributes);
+	$standalone = 1;
+      } else {
+	# honor wait attribute
+	sleep validateWait($attributes->[0]{wait});
+      }
+      #put
+      $PUTFILE_ATTS->{put} = validateYesNo($attributes->[0]{put},"YES");
+      if ($PUTFILE_ATTS->{put} eq 'YES') {
+	# Only deal with if putting this file
+	#require
+	$PUTFILE_ATTS->{require} = validateYesNo($attributes->[0]{require},"YES");
+	if (defined($attributes->[0]{file})) {
+	  $PUTFILE_ATTS->{file} = qq($attributes->[0]{file});
+	} else {
+	  if ($PUTFILE_ATTS->{require} eq 'YES') {
+            print "HALT: file=\"\" attribute missing in required <pfile /> entry...\n";
+            exit;
+	  } else {
+            warn "WARNING: file=\"\" attribute missing in required file...<pfile /> skipped\n";
+            $skip = 1;
+	  }
+	}
+	if ($skip eq 0) {
+	  # Only deal with if $skip is set to 0
+	  # newname
+	  if (defined($attributes->[0]{newname})) {
+            # Should be file name only - not a dir path!
+            $PUTFILE_ATTS->{newname} = qq($attributes->[0]{newname});
+            # Validate newname if contained
+            if ($PUTFILE_ATTS->{newname} ne '') {
+              if ($PUTFILE_ATTS->{newname} =~ m/\//) {
+        	warn "WARNING $PUTFILE_ATTS->{newname} appears to be a directory path and not a filename - $PUTFILE_ATTS->{file} will not be renamed...\n";
+        	$PUTFILE_ATTS->{newname} = '';
+              }
+            }
+	  } else {
+            $PUTFILE_ATTS->{newname} = '';
+	  }
+	  # process? defaults to no
+	  $PUTFILE_ATTS->{process} = validateYesNo($attributes->[0]{process},"NO");
+          # keep original?  defaults to yes
+   	  $PUTFILE_ATTS->{keep} = validateYesNo($attributes->[0]{keep},"YES");
+	  # Put file
+	  putFileManager();
+	  # Clean up if standalone tag
+	  if ($standalone eq 1) {
+            putfileTagEnd();
+	  }
+	}
+      }
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  # Called immediately after pfileTagStart, but does nothing right now
+
+  sub pfileTagEnd {
+    if ($PARSER->{PUTFILE_SKIP_PFILES} eq 0) {
+      # Reset $PUTFILE_ATTS
+      $PUTFILE_ATTS->{put} = '';
+      $PUTFILE_ATTS->{file} = '';
+      $PUTFILE_ATTS->{require} = '';
+      $PUTFILE_ATTS->{process} = '';
+      $PUTFILE_ATTS->{newname} = '';
+      $PUTFILE_ATTS->{keep} = '';
+      $PUTFILE_ATTS->{wait} = '';
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  # Chooses which putfile case to handle
+
+  sub putFileManager {
+    # Validate source file
+    if (isLocal($PUTFILE_ATTS->{file}) eq 1 && $PUTFILE_ATTS->{localOrRemote} eq 'local') {
+      # Move local file to another local dir
+      putLocalToLocal();
+    } elsif (isLocal($PUTFILE_ATTS->{file}) eq 1 && $PUTFILE_ATTS->{localOrRemote} eq 'remote') {
+      # Move local file to remote dir
+      putLocalToRemote();
+    } elsif (isRemote($PUTFILE_ATTS->{file}) eq 1 && $PUTFILE_ATTS->{localOrRemote} eq 'local') {
+      # Move a file from a remote host to local dir
+      putRemoteToLocal();
+    } elsif (isRemote($PUTFILE_ATTS->{file}) eq 1 && $PUTFILE_ATTS->{localOrRemote} eq 'remote') {
+      # Move file on remote host 1 to dir on remote host 2
+      # Currently inefficient - localhost used as "man in the middle"
+      #  remote1-->local-->remote2
+      putRemote1ToRemote2();
+    } else {
+      print "HALT: Can not be determined if $PUTFILE_ATTS->{file} is local or remote...\n";
+      exit;
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  # copies src file to local dir - macro processing done after the move
+
+  sub putLocalToLocal {
+    my %destinationHash = parseDirPath($PUTFILE_ATTS->{dir});
+    my $destinationHash = \%destinationHash;
+    my %srcFileHash = parseDirPath($PUTFILE_ATTS->{file});
+    my $srcFileHash = \%srcFileHash;
+    # make sure src file exists
+    if (isLocalFile($srcFileHash->{PATH}) eq 0) {
+      if ($PUTFILE_ATTS->{require} eq 'YES') {
+        print "HALT: file \"$srcFileHash->{PATH}\" can not be found ...\n";
+        exit;
+      } else {
+        warn "WARNING: \"$srcFileHash->{PATH}\" can not be found ...\n";
+      }
+    } else {
+      # make sure destination directory is there
+      ensureLocalDir($destinationHash->{PATH},0755);
+      $destinationHash->{PATH} = Cwd::realpath($destinationHash->{PATH});
+      # copy src file to local destination dir - check for new name
+      my $newfiledestination = '';
+      if ($PUTFILE_ATTS->{newname} ne '') {
+        $newfiledestination = "$destinationHash->{PATH}/$PUTFILE_ATTS->{newname}";
+      } else {
+        my $filename = getLastPathMember($srcFileHash->{PATH});
+        $newfiledestination = "$destinationHash->{PATH}/$filename";
+      }
+      prepForNewFile($newfiledestination);
+      copy($srcFileHash->{PATH},$newfiledestination) || die "HALT: Error copying file...\n";
+      # Process macros in local file
+      if ($PUTFILE_ATTS->{process} eq 'YES') {
+        preProcessFile($newfiledestination,%extraOps);
+      }
+      # Schedule file for removal if keep=YES
+      if($PUTFILE_ATTS->{keep} eq 'NO'){
+        push(@filesToRemove,$srcFileHash->{PATH});
+      }
+    }
+    return;
+  }
+
+  sub putLocalToRemote {
+    my %destinationHash = parseDirPath($PUTFILE_ATTS->{dir});
+    my $destinationHash = \%destinationHash;
+    my %srcFileHash = parseDirPath($PUTFILE_ATTS->{file});
+    my $srcFileHash = \%srcFileHash;
+    my $tmpfiledestination = '';
+    # make sure src file exists
+    if (isLocalFile($srcFileHash->{PATH}) eq 0) {
+      if ($PUTFILE_ATTS->{require} eq 'YES') {
+        print "HALT: $srcFileHash->{PATH} can not be located...\n";
+        exit;
+      } else {
+        warn "WARNING: $srcFileHash->{PATH} can not be located...\n";
+      }
+    } else {
+      # Send file to remote host
+      my $hostIPAddress = getIPAddress($destinationHash->{HOST});
+      # get host ip, verify
+      if ($hostIPAddress ne -1) {
+        # suck file content into string and process macros
+        my $tmpSrcFile = '';
+        if ($PUTFILE_ATTS->{process} eq 'YES') {
+          # Process macros in tmp local file, get path to file to use
+          $tmpSrcFile = getTmpPreProcessedFile($srcFileHash->{PATH},%extraOps);
+          # schedule tmp file for deletion
+          push(@filesToRemove,$tmpSrcFile);
+        } else {
+          $tmpSrcFile = $srcFileHash->{PATH};
+        }
+        my $destination = '';
+        if ($PUTFILE_ATTS->{newname} ne '') {
+          # send under guise of "newname"
+          $destination = "$destinationHash->{PATH}/$PUTFILE_ATTS->{newname}";
+        } else {
+          # send as original file
+          my $filename = getLastPathMember($srcFileHash->{PATH});
+          $destination = "$destinationHash->{PATH}/$filename";
+        }
+        my $scpout = putViaSCP($hostIPAddress,$destinationHash->{USERNAME},
+        + $destinationHash->{PORT},$tmpSrcFile,$destination);
+        # stdout
+        showIfVerbose($scpout,1);
+	# Schedule original file for removal if keep=YES
+	if($PUTFILE_ATTS->{keep} eq 'NO'){
+	  push(@filesToRemove,$srcFileHash->{PATH});
+	}
+      } else {
+         print "HALT: $destinationHash->{HOST} has no associated IP address in $SECURERUN->{HOSTFILE}\n";
+         exit;
+      }
+    }
+    return;
+  }
+
+  # copies a remote file to a local dir - macro processing done once it is on the local host
+
+  sub putRemoteToLocal {
+    my %destinationHash = parseDirPath($PUTFILE_ATTS->{dir});
+    my $destinationHash = \%destinationHash;
+    my %srcFileHash = parseDirPath($PUTFILE_ATTS->{file});
+    my $srcFileHash = \%srcFileHash;
+    # make sure destination directory is there
+    ensureLocalDir($destinationHash->{PATH},0755);
+    # get absolute path
+    $destinationHash->{PATH} = Cwd::realpath($destinationHash->{PATH});
+    # Get file from remote
+    my $hostIPAddress = getIPAddress($srcFileHash->{HOST});
+    if ($hostIPAddress ne -1) {
+      my $newfiledestination = '';
+      if ($PUTFILE_ATTS->{newname} ne '') {
+        $newfiledestination = "$destinationHash->{PATH}/$PUTFILE_ATTS->{newname}";
+      } else {
+        my $filename = getLastPathMember($srcFileHash->{PATH});
+        $newfiledestination = "$destinationHash->{PATH}/$filename";
+      }
+      prepForNewFile($newfiledestination);
+      # get file from remote host
+      my $scpout = getViaSCP($hostIPAddress,$srcFileHash->{USERNAME},$srcFileHash->{PORT},$srcFileHash->{PATH},$newfiledestination);
+      showIfVerbose($scpout,1);
+      # Ensure file was copied over
+      if (!-e $newfiledestination) {
+        if ($PUTFILE_ATTS->{require} eq 'YES') {
+          print "HALT: Problem getting $newfiledestination from $srcFileHash->{PATH}...\n";
+          exit;
+        } else {
+          warn "WARNING: Problem getting $newfiledestination from $srcFileHash->{PATH}...\n";
+        }
+      }
+      # Process macros in local file
+      if ($PUTFILE_ATTS->{process} eq 'YES') {
+        preProcessFile($newfiledestination,%extraOps);
+      }
+    } else {
+       print "HALT: $destinationHash->{HOST} has no associated IP address in $SECURERUN->{HOSTFILE}\n";
+       exit;
+    }
+    return;
+  }
+
+  # copies a file on remote host 1 to remote host 2 - macro processing is done while
+  # on the local host
+
+  sub putRemote1ToRemote2 {
+    # Original
+    my $originalDir = $PUTFILE_ATTS->{dir};
+    my $originalNewname = '';
+    if ($PUTFILE_ATTS->{newname} eq '') {
+      $originalNewname = getLastPathMember($PUTFILE_ATTS->{file});
+    } else {
+      $originalNewname = "$PUTFILE_ATTS->{newname}";
+    }
+    # Tmp for remote to local
+    my $tmpNewName = getTmpName();
+    $PUTFILE_ATTS->{dir} = "$SECURERUN->{SRTMPDIR}";
+    $PUTFILE_ATTS->{newname} = "$tmpNewName";
+    # Get from remote host 1 and put on local using tmp name
+    putRemoteToLocal();
+    # Put local file on remote - restoring original or newname..
+    $PUTFILE_ATTS->{file} = "$PUTFILE_ATTS->{dir}/$tmpNewName";
+    $PUTFILE_ATTS->{dir} = "$originalDir";
+    $PUTFILE_ATTS->{newname} = "$originalNewname";
+    # Be sure to not process macros twice
+    $PUTFILE_ATTS->{process} = 'NO';
+    # Put onto remote 2 from local
+    putLocalToRemote();
+    # Remove local tmp dir
+    unlink "$SECURERUN->{SRTMPDIR}/$tmpNewName" || die $!;
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# <runfile>/<rfile> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub runfileTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    if (defined($attributes->[0]{run})) {
+      if (defined($attributes->[0]{file})) {
+        chomp($attributes->[0]{file});
+        $RUNFILE_ATTS->{file} = qq($attributes->[0]{file});
+        #interp
+        if (defined($attributes->[0]{interp})) {
+          chomp($attributes->[0]{interp});
+          $RUNFILE_ATTS->{interp} =  qq($attributes->[0]{interp});
+        } else {
+          $SYSMSG = "Warning: <runfile interp=\"\".../> not defined...\n";
+          showIfVerbose($SYSMSG,2);
+          $RUNFILE_ATTS->{interp} = '';
+        }
+        #cmd - macros interpolated later
+        if (defined($attributes->[0]{cmd})) {
+	  $RUNFILE_ATTS->{cmd} = qq($attributes->[0]{cmd});
+        } else {
+	  $RUNFILE_ATTS->{cmd} = '';
+	}
+	#args
+        if (defined($attributes->[0]{args})) {
+          chomp($attributes->[0]{args});
+          $RUNFILE_ATTS->{args} =  qq($attributes->[0]{args});
+        } else {
+          $RUNFILE_ATTS->{args} = '';
+        }
+        #require
+        $RUNFILE_ATTS->{require} = validateYesNo($attributes->[0]{require},'YES');
+        #wait
+        $RUNFILE_ATTS->{wait} = validateWait($attributes->[0]{wait});
+        #preprocess
+        $RUNFILE_ATTS->{process} = validateYesNo($attributes->[0]{process},'YES');
+        # name of STDOUT to be saved in %extraOps - validate name
+        if (defined($attributes->[0]{name})) {
+          if ($attributes->[0]{name} =~ m/[a-zA-Z0-9.]*/) {
+            $RUNFILE_ATTS->{name} = $attributes->[0]{name};
+          } else {
+            warn "WARNING: <script>/<runfile> detected with invalid \"name\" attribute...resetting to \"STDOUT\"\n";
+            $RUNFILE_ATTS->{name} = 'STDOUT';
+          }
+	} else {
+	  $RUNFILE_ATTS->{name} = 'STDOUT'
+	}
+        sleep $RUNFILE_ATTS->{wait};
+      } else {
+        print "HALT: <runfile file=\"\".../> not defined...\n";
+        exit;
+      }
+    } else {
+      $SYSMSG = "WARNING: <runfile> not run...\n";
+      showIfVerbose($SYSMSG,2);
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub runfileTagEnd () {
+    # Run using $RUNFILE_ATTS set in onRunFileStart
+    runFileManager();
+    $RUNFILE_ATTS = ();
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub runFileManager {
+    if (isLocal($RUNFILE_ATTS->{file}) eq 1) {
+      $SYSMSG = "$RUNFILE_ATTS->{file} is local and valid...\n";
+      showIfVerbose($SYSMSG,2);
+      runLocalFile();
+    } elsif (isRemote($RUNFILE_ATTS->{file}) eq 1) {
+      $SYSMSG = "$RUNFILE_ATTS->{file} is remote and valid...\n";
+      showIfVerbose($SYSMSG,2);
+      runRemoteFile();
+    } else {
+      print "HALT: $RUNFILE_ATTS->{file} is not a valid file...\n";
+      exit;
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub runLocalFile {
+    my %srcFileHash = parseDirPath($RUNFILE_ATTS->{file});
+    my $srcFileHash = \%srcFileHash;
+    # ensure local file exists, if not warn or die
+    if (isLocalFile($srcFileHash->{PATH}) eq 1) {
+      # get abs dir and ensure abs path
+      my $SRTMPDIR = getParentPath($srcFileHash->{PATH});
+      # check for just file name - add relative path current, "."
+      if ($SRTMPDIR eq '') {
+        $SRTMPDIR = getcwd;
+      }
+      $SRTMPDIR = Cwd::realpath($SRTMPDIR);
+      my $tmpfile = getLastPathMember($srcFileHash->{PATH});
+      my $newfile = "$SRTMPDIR/$tmpfile";
+      if ($RUNFILE_ATTS->{process} eq 'YES') {
+        # copy file to tmp, reassign $newfile
+	$newfile = "$SRTMPDIR/".getTmpName();
+        copy("$SRTMPDIR/$tmpfile",$newfile);
+	# process file (sub ensures it is a text file)     
+        preProcessFile($newfile,%extraOps);
+	# assign new file to hash
+        $srcFileHash->{PATH} = $newfile;
+	# schedule $newfile for removal
+        push(@filesToRemove,$srcFileHash->{PATH});
+      }
+      $srcFileHash->{PATH} = $newfile;
+      # get interp info
+      my %interpHash = getInterpInfo($SECURERUN->{LOCALHOST},$RUNFILE_ATTS->{interp});
+      my $interpHash = \%interpHash;
+      # validate interpretor
+      if (isValidInterp($RUNFILE_ATTS->{interp},$RUNFILE_ATTS->{file}) ne 1) {
+        if ($RUNFILE_ATTS->{require} eq 'YES') {
+          print "HALT: Invalid interpretor, $RUNFILE_ATTS->{interp} detected in $RUNFILE_ATTS->{file}...\n";
+          exit;
+        } else {
+          warn "WARNING: Invalid interpretor, $RUNFILE_ATTS->{interp} detected \nfor use on $RUNFILE_ATTS->{file}...\n";
+        }
+      } else {
+        my $interp = "$interpHash->{BIN} $interpHash->{FLAGS}";
+        my $file = $srcFileHash->{PATH};
+	# use default cmd string if tag attribute is not provided.
+	if ($RUNFILE_ATTS->{cmd} eq '' && defined($interpHash->{DEFAULT_CMD})) {
+	  $RUNFILE_ATTS->{cmd} = $interpHash->{DEFAULT_CMD};
+	}
+        my $cmd = createCmd($interp,$file);
+        if (!-x $file && $interpHash->{BIN} eq '') {
+          $SYSMSG = "WARNING: $file is not executable\n";
+          showIfVerbose($SYSMSG,1);
+        }
+        $SYSMSG = qx($cmd);
+	# capture STDOUT
+        if ($RUNFILE_ATTS->{name} ne 'STDOUT') {
+          chomp($SYSMSG);
+          addToExtraOps($RUNFILE_ATTS->{name},$SYSMSG);
+	  addToExtraOps('STDOUT',$SYSMSG);
+	  # hided named STDOUTs until verbost level 2
+	  showIfVerbose($SYSMSG,2);
+        } else {
+	  # By default, and unnamed or badly named STDOUT is renamed to STDOUT,
+	  # so even though it uses a hash here, the value is "STDOUT".
+          addToExtraOps($RUNFILE_ATTS->{name},$SYSMSG);
+	  # if not named STDOUT, send to screen at verbose level 1
+          showIfVerbose($SYSMSG,1);
+	}
+      }
+    } elsif ($RUNFILE_ATTS->{require} eq 'YES') {
+      print "HALT: Local $srcFileHash->{PATH} file not found...\n";
+      exit;
+    } elsif ($RUNFILE_ATTS->{require} eq 'NO') {
+      warn "WARN: Local $srcFileHash->{PATH} file not found...\n";
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub runRemoteFile {
+    my %srcFileHash = parseDirPath($RUNFILE_ATTS->{file});
+    my $srcFileHash = \%srcFileHash;
+    my $hostIPAddress = getIPAddress($srcFileHash->{HOST});
+    # get host ip, verify
+    if ($hostIPAddress ne -1) {
+      # get interp info
+      my %interpHash = getInterpInfo($SECURERUN->{LOCALHOST},$RUNFILE_ATTS->{interp});
+      my $interpHash = \%interpHash;
+      # validate interpretor
+      if (isValidInterp($RUNFILE_ATTS->{interp},$RUNFILE_ATTS->{file}) ne 1) {
+        if ($RUNFILE_ATTS->{require} eq 'YES') {
+          print "HALT: Invalid interpretor, $RUNFILE_ATTS->{interp} detected in $RUNFILE_ATTS->{file}...\n";
+          exit;
+        } else {
+          warn "WARNING: Invalid interpretor, $RUNFILE_ATTS->{interp} detected \nfor use on $RUNFILE_ATTS->{file}...\n";
+        }
+      } else {
+        my $interp = "$interpHash->{BIN} $interpHash->{FLAGS}";
+        my $file = $srcFileHash->{PATH};
+	# use default cmd string if tag attribute is not provided.
+	if ($RUNFILE_ATTS->{cmd} eq '' && defined($interpHash->{DEFAULT_CMD})) {
+	  $RUNFILE_ATTS->{cmd} = $interpHash->{DEFAULT_CMD};
+	}
+        my $cmd = createCmd($interp,$file);
+        $SYSMSG = execViaSSH($hostIPAddress,$srcFileHash->{USERNAME},$srcFileHash->{PORT},$cmd);
+        chomp($SYSMSG);
+	# capture STDOUT
+        if ($RUNFILE_ATTS->{name} ne 'STDOUT') {
+          addToExtraOps($RUNFILE_ATTS->{name},$SYSMSG);
+	  addToExtraOps('STDOUT',$SYSMSG);
+	  # hided named STDOUTs until verbost level 2
+	  showIfVerbose($SYSMSG,2);
+        } else {
+	  # By default, and unnamed or badly named STDOUT is renamed to STDOUT,
+	  # so even though it uses a hash here, the value is "STDOUT".
+          addToExtraOps($RUNFILE_ATTS->{name},$SYSMSG);
+	  # if not named STDOUT, send to screen at verbose level 1
+          showIfVerbose($SYSMSG,1);
+	}
+      }
+    } elsif ($RUNFILE_ATTS->{require} eq 'YES') {
+      print "HALT: $RUNFILE_ATTS->{file} doesn't contain a valid host...\n";
+      exit;
+    } elsif ($RUNFILE_ATTS->{require} eq 'NO') {
+      warn "WARN: $RUNFILE_ATTS->{file} doesn't contain a valid host...\n";
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# <script> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub scriptTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    $PARSER->{SCRIPT_FLAG} = 1;
+    $SCRIPT_ATTS->{keep} = validateYesNo($attributes->[0]{keep},'NO');
+    if (!defined($attributes->[0]{file})) {
+      $attributes->[0]{file} = "$SECURERUN->{SRTMPDIR}/".getTmpName();
+    }
+    if (!defined($attributes->[0]{run})) {
+      $attributes->[0]{run} = 'YES';
+    }
+    if (!defined($attributes->[0]{file})) {
+      $attributes->[0]{file} = "$SECURERUN->{SRTMPDIR}/".getTmpName();
+    }
+    # Set default element in %extraOps of the standard output to be STDOUT
+    if (!defined($attributes->[0]{name})) {
+      $attributes->[0]{name} = "STDOUT";
+    }
+    # the rest is exactly in line with the <runfile> tag :)
+    runfileTagStart(@attributes);
+    showCallerInfo(caller());
+    return;
+  }
+
+  # create file, send to remote location if necessary
+
+  sub scriptTagCode {
+    my($commentText) = $_[0];
+    if ($PARSER->{SCRIPT_FLAG} eq 1) {
+      my %srcFileHash = parseDirPath($RUNFILE_ATTS->{file});
+      my $srcFileHash = \%srcFileHash;
+      my $isLocal = isLocal($RUNFILE_ATTS->{file});
+      my $filename = getLastPathMember($srcFileHash->{PATH});
+      my $dir = getParentPath($srcFileHash->{PATH});
+      my $outfile = '';
+      if ($isLocal eq 1) {
+        ensureLocalDir($dir,0755);
+        $outfile = "$srcFileHash->{PATH}";
+        if ($RUNFILE_ATTS->{process} eq 'YES') {
+          $commentText = preProcessStr($commentText,%extraOps);
+          $RUNFILE_ATTS->{process} = 'NO';
+        }
+        writeScriptFile($commentText,$outfile);
+        $RUNFILE_ATTS->{file} = $outfile;
+      } elsif ($isLocal eq 0) {
+        if ($RUNFILE_ATTS->{process} eq 'YES') {
+          $commentText = preProcessStr($commentText,%extraOps);
+          $RUNFILE_ATTS->{process} = 'NO';
+        }
+        my $tmpname = getTmpName();
+        $outfile = "$SECURERUN->{SRTMPDIR}/$tmpname";
+        writeScriptFile($commentText,$outfile);
+        $PUTFILE_ATTS->{dir} = "$srcFileHash->{USERNAME}\@$srcFileHash->{HOST}#$srcFileHash->{PORT}:$dir";
+        $PUTFILE_ATTS->{file} = $outfile;
+        $PUTFILE_ATTS->{require} = $RUNFILE_ATTS->{require};
+        $PUTFILE_ATTS->{process} = $RUNFILE_ATTS->{process};
+        $PUTFILE_ATTS->{newname} = $filename;
+	$PUTFILE_ATTS->{keep}="NO";
+        # send file
+        putLocalToRemote();
+        # reset hash
+        $PUTFILE_ATTS = ();
+      } else {
+        print "HALT: $RUNFILE_ATTS->{file} is not a valid destination...\n";
+        exit;
+      }
+      # schedule for removal :)
+      if ($SCRIPT_ATTS->{keep} eq 'NO') {
+        push(@filesToRemove,$outfile);
+      }
+    } else {
+
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  #
+  #  Writes out script file in <script>
+  #
+
+  sub writeScriptFile {
+    my($scriptText,$targetFile) = @_;
+    open(TMPFILE,">$targetFile");
+    for my $text (split('\n',$scriptText)) {
+      #covert tabs to spaces
+      $text =~ s/^\t/       /g;
+      #shift all text over 6 spaces to the left
+      $text =~ s/^\s{1,6}//g;
+      # Write line if not blank or a CDATA line
+      if ($text !~ m/^$/ && $text !~ m/<!\[CDATA\[/ && $text !~ m/\]\]>/) {
+        print TMPFILE "$text\n";
+      }
+    }
+    close(TMPFILE);
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub scriptTagEnd {
+    runfileTagEnd();
+    $PARSER->{SCRIPT_FLAG} = 0;
+    $SCRIPT_ATTS = ();
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  <define/> state support functions
+#    -- STDOUT can be saved to a macro via the <script> and <runfile> tags
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub defineTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    if (defined($attributes->[0]{name})) {
+      if ($attributes->[0]{name} =~ m/[a-zA-Z0-9.]*/) {
+        if (defined($attributes->[0]{value})) {
+          addToExtraOps(qq($attributes->[0]{name}),qq($attributes->[0]{value}));
+        } else {
+          warn "WARNING: <define/> detected with \"value\" attribute - variable set to NULL string\n";
+          addToExtraOps(qq($attributes->[0]{name}),'');
+        }
+      } else {
+        warn "WARNING: <define/> detected with invalid \"name\" attribute\n";
+      }
+    } else {
+      warn "WARNING: <define/> detected with no \"name\" attribute\n";
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub defineTagEnd {
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  <undefine/> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub undefineTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    if (defined($attributes->[0]{name})) {
+      if ($attributes->[0]{name} =~ m/[a-zA-Z0-9.]*/) {
+        removeFromExtraOps(qq($attributes->[0]{name}));
+      } else {
+        warn "WARNING: <undefine/> detected with invalid \"name\" attribute\n";
+      }
+    } else {
+      warn "WARNING: <undefine/> detected with no \"name\" attribute\n";
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub undefineTagEnd {
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  <chbasedir/> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub chbasedirTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    if (exists($attributes->[0]{dir})) {
+      # if relative path, it is relative to current basedir
+      ensureLocalDir(qq($attributes->[0]{dir}),0755);
+      $SECURERUN->{BASEDIR} = Cwd::realpath(qq($attributes->[0]{dir}));
+      addToExtraOps('BASEDIR',$SECURERUN->{BASEDIR});
+      cdCwdToBASEDIR();
+    } else {
+      print "HALT: dir attribute for <chbasedir/> not specified\n";
+      exit
+    }    
+    showIfVerbose($SYSMSG,1);
+    return;
+  }
+
+  sub chbasedirTagEnd {
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  <input/> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub inputTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    my $default = '';
+    if ($CMDLINEOPTS->{NOINPUTTAG} eq 0) {
+      if (exists($attributes->[0]{name})) {
+	if (exists($attributes->[0]{msg})) {
+	  my $showDefault =  '>';
+	  if (exists($attributes->[0]{default})) {
+	    $default = $attributes->[0]{default};
+	    $showDefault = "\n($default) >";
+	  }
+	  # shift lines over for multi-lined text
+          $attributes->[0]{msg} =~ s/\n\s*/\n/g;
+	  print "\n".qq($attributes->[0]{msg})." $showDefault";
+	  my $in = <TTY>;
+	  chomp($in);
+	  if ($in !~ m/^$/) {
+	    $in = preProcessStr($in,%extraOps);
+	    addToExtraOps(qq($attributes->[0]{name}),$in);
+	    $SYSMSG = "WARN: Macro read in via <input/> tag ...\n";
+	    showIfVerbose($SYSMSG,2);
+          } else {
+   	    if ($default !~ m/^$/) {
+	      addToExtraOps(qq($attributes->[0]{name}),$default);
+	    } else {
+	      $SYSMSG = "WARN: Blank STDIN detected from <input/>.  Use <define/> or <undefine/> to reset a macro..\n";
+	      showIfVerbose($SYSMSG,2);
+	    }
+	  }
+	} else {
+	  $SYSMSG = "WARN: name attribute not included in <input/> tag..\n";
+	  showIfVerbose($SYSMSG,1);
+	}
+      } else {
+	$SYSMSG = "WARN: name attribute not included in <input/> tag..\n";
+	showIfVerbose($SYSMSG,1);
+      }
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub inputTagEnd {
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#  <output/> state support functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub outputTagStart {
+    my(@attributes) = $_[0];
+    my($attributes) = \@attributes;
+    if (exists($attributes->[0]{msg})) {
+      chomp($attributes->[0]{msg});
+      # shifts text left for multi line entries
+      $attributes->[0]{msg} =~ s/\n\s*/\n/g;
+      print "\n".qq($attributes->[0]{msg})."\n";;
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  sub outputTagEnd {
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# HTML::Parser event handlers
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  # This event is triggered when a processing instructions markup is
+  # recognized. The format and content of processing instructions is system
+  # and application dependent such as <? XML ...> or <? HTML ...>.
+  sub onProcess {
+    showCallerInfo(caller());
+    return;
+  }
+
+  # Invoked when a start tag is encountered
+  sub onStart {
+    my($tagName,@attributes) = @_;
+    # Interactive mode
+    if ($CMDLINEOPTS->{INTERACTIVE} eq 1) {     
+      print "START..<$tagName>: press key to continue [ctrl-c to quit]";
+      my $ans = <STDIN>;
+    }
+    # create reference to array of hashes
+    my $attributes = \@attributes;
+    # cycle through attributes values only - very inefficient
+    foreach my $valpair (keys(%{$attributes->[0]})) {
+      $attributes->[0]{$valpair} = preProcessStr($attributes->[0]{$valpair},%extraOps);
+    }
+    my $TagStartSub = $tagName."TagStart(\@attributes)";
+    eval $TagStartSub;
+    showCallerInfo(caller());
+    return;
+  }
+
+  # Invoked for text between tags - implement some validation here
+  sub onText {;
+    my($text) = $_[0];
+    if ($PARSER->{SCRIPT_FLAG} eq 1) {
+      $text = preProcessStr($text,%extraOps);
+      scriptTagCode($text);
+    }
+    if ($CMDLINEOPTS->{SHOWTEXT}) {
+      if ($text =~ m/[\w\d]/ && $text !~ m/^[\s\n]*$/) {
+        chomp($text);
+        print "$text\n";
+      }
+    }    
+    showCallerInfo(caller());
+    return;
+  }
+
+  # Invoked when comments are encountered - print if flagged to do so
+  sub onComment {
+    my($commentText) = @_;
+    if ($CMDLINEOPTS->{SHOWCOMMENTS}) {
+      chomp($commentText);
+      print "$commentText\n";
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+  # Invoked when an ending tag is encountered
+  sub onEnd {
+    my($tagName) = @_;
+    # Interactive mode
+    if ($CMDLINEOPTS->{INTERACTIVE} eq 1) {     
+      print "END....<$tagName>: press key to continue [ctrl-c to quit]";
+      my $ans = <STDIN>;
+    }
+    my $TagEndSub = $tagName."TagEnd()";
+    eval $TagEndSub;
+    # purge @filesToRemove array if it is larger than 10 files
+    if(@filesToRemove > 10) {
+      unlink @filesToRemove;
+    }
+    showCallerInfo(caller());
+    return;
+  }
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Driver of securerun functionality
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  sub main {
+    # Builds string of Mark Up Language (ML) data; accepts file or stream of data
+    my $ML = '';
+    if (defined($SECURERUN->{RUNFILE})) {
+      $ML = txtFileToString($SECURERUN->{RUNFILE});
+    } else {
+      while (<STDIN>) {
+        $ML .= $_;
+      }
+    }
+   
+    # 1) Preprocess $ML with %extraOps - these are static vars
+    #    invoked through command line "-o" and envronmental vars.
+    #    run file processed by default unlees "-dontprocessrunfile" is set
+    if ($CMDLINEOPTS->{DONTPROCESSRUNFILE} ne 1) {
+      $ML = preProcessStr($ML,%extraOps);
+    }
+
+    # 2) Feed $ML data to $PARSER to parse and invoke
+    #    event driven actions (see handlers)
+    $PARSER->parse($ML);
+
+    # !!CHANGE TO "-saverunfile"!!!
+    # 3) Dump out copy of the run file in basedir if "-SAVERUNFILE" is set
+    if ($CMDLINEOPTS->{SAVERUNFILE} !~ m/^$/) {
+      open(RUNFILE,">$CMDLINEOPTS->{SAVERUNFILE}");
+        print RUNFILE $ML;
+      close(RUNFILE);
+    }
+    showCallerInfo(caller());
+    return;
+  } # end sub main
+
+  # Call sub init
+  &init();
+   
+  # Call sub main
+  &main();
+
+  # Flush parser buffer
+  $PARSER->eof;
+  
+# END block - always run last
+END {
+  unlink @filesToRemove;
+  rmtree $SECURERUN->{SRTMPDIR};
+}
+
+exit(0);

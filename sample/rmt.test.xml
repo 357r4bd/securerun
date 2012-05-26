@@ -1,0 +1,73 @@
+<?xml version='1.0' encoding='utf-8'?>
+<securerun
+  name="test.startadc" 
+  basedir="./TEST_%PROCID%" 
+  prefs="-verbose_level:1;-create_dirs:1;">
+ 
+  <!-- 
+  <define name="USER" value="user"/>
+  <define name="RMTHOST" value="host"/>
+  <define name="RMTDIR" value="/tmp"/>
+  -->
+  
+  <!-- remote test -->
+
+  <script name="TEST.OUT" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo ...ok
+    ]]>
+  </script>
+
+  <script name="REMOTEHOST.SH" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which sh
+    ]]>
+  </script>
+
+  <script name="REMOTEHOST.CSH" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which csh
+    ]]>
+  </script>
+
+  <script name="REMOTEHOST.FTP" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which ftp
+    ]]>
+  </script>
+
+  <script name="REMOTEHOST.F77" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which f77
+    ]]>
+  </script>
+
+  <script name="PLATFORM.UNAME" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      uname -a
+    ]]>
+  </script> 
+
+  <script name="RMTDETAILS" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo   "@@ Macro test (remote)@@:"
+      echo   "Script name: $0 ..."
+      echo   "Detected platform (uname -a): %PLATFORM.UNAME%"
+      echo   "..detecting bourne shell: %REMOTEHOST.SH%  "
+      echo   "..detecting c-shell:      %REMOTEHOST.CSH% "
+      echo   "..detecting ftp:          %REMOTEHOST.FTP% "
+      echo   "..detecting f77:          %REMOTEHOST.F77% "
+    ]]>    
+  </script>
+ 
+  <!-- Test clean up .. local! -->
+    
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      # Clean out %BASEDIR%
+      echo   "cleaning up ..."
+      find %BASEDIR% -type f -exec rm -rf {} \;
+      rm -rf %BASEDIR%
+    ]]>    
+  </script> 
+</securerun>

@@ -1,0 +1,15 @@
+For right now, it is best to compile what is in berun/HTML-Parser-3.31, and have that lib available.  Later on, berun will accept some environmental variable pointing to the local HTML::Parser libs.  This is all in an attempt to allow this to be run standalone by users who do not have the right to install perl modules.
+
+Instructions:
+cd berun/HTML-Parser-3.31
+perl Makefile.PL 
+#NOTE: Make sure that the "perl" you use to compile HTML::Parser
+#is the same perl that is being used to run berun.pl in line 1 of berun.pl
+make #or gmake
+cd .. # you are now ready to go
+
+If you want to make these libs accessible to all instances of berun.pl,
+change to line:
+use lib qw(./HTML-Parser-3.31/blib/lib ./HTML-Parser-3.31/blib/arch);
+to
+use lib qw(/yourpath/HTML-Parser-3.31/blib/lib /yourpath/HTML-Parser-3.31/blib/arch);

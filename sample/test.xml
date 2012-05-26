@@ -1,0 +1,119 @@
+<?xml version='1.0' encoding='utf-8'?>
+<securerun
+  name="test.startadc" 
+  basedir="./TEST_%PROCID%"
+  tmpdir="./TEST_%PROCID%/oO0tmp0Oo"
+  prefs="-verbose_level:1;-create_dirs:1"> 
+  <!-- tmpdir set relative to basedir -->
+   
+  <!-- save STDOUT of script to macro using "name" attribute -->
+  <script name="TEST.OUT" cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo ...ok
+    ]]>
+  </script>
+
+  <script name="LOCALHOST.SH" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which sh
+    ]]>
+  </script>
+
+  <script name="LOCALHOST.CSH" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which csh
+    ]]>
+  </script>
+
+  <script name="LOCALHOST.FTP" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which ftp
+    ]]>
+  </script>
+
+  <script name="LOCALHOST.F77" cmd="%i %f" interp="SH">
+    <![CDATA[
+      which f77
+    ]]>
+  </script>
+
+   <!-- interactive input from user -->
+  <input name="LOCALHOST.SH" msg="Choose Bourne shell [%LOCALHOST.SH%]:"/>
+  <input name="LOCALHOST.CSH" msg="Choose c-shell [%LOCALHOST.CSH%]:"/>
+  <input name="LOCALHOST.FTP" msg="Choose ftp [%LOCALHOST.FTP%]:"/>
+  <input name="LOCALHOST.F77" msg="Choose f77 compiler [%LOCALHOST.F77%]:"/>
+  
+  <script name="PLATFORM.UNAME" cmd="%i %f" interp="SH">
+    <![CDATA[
+      uname
+    ]]>
+  </script> 
+
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo "Testing redirect (>) ..."
+      echo hello > test.out
+      if [ -e test.out ]; then
+        echo "-> WORKED!"
+      else 
+        echo "-> FAILED!"
+      fi
+      echo
+    ]]>
+  </script> 
+
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo "testing <<"
+      echo
+    ]]>
+  </script>
+
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo "########"
+      echo "# Hello!, if you see this with no errors, things should "
+      echo "# work for you!"
+      echo "# DO NOT FORGET:"
+      echo "# "
+      echo "# 1) Add remote hosts to your .srhost.def file."
+      echo "# 2) Set up passwordless authentication using ssh"
+      echo "#     for these remote hosts."
+      echo "# 3) Read the documentation, and remember that securerun"
+      echo "#    is only as secure as you make it."
+      echo "#"
+    ]]>    
+  </script>  
+
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo "# @@ Macro test @@:"
+      echo "# Script name: $0 ..."
+      echo "# Basedir: %BASEDIR%"
+      echo "# Tempdir: %SRTMPDIR%"
+      echo "# Logfile: %LOGFILE%"
+      echo "# Testing STDOUT capture: %TEST.OUT%"
+      echo "# Detected platform (uname): %PLATFORM.UNAME%"
+      echo "# ..detecting bourne shell:  %LOCALHOST.SH%  "
+      echo "# ..detecting c-shell:       %LOCALHOST.CSH% "
+      echo "# ..detecting ftp:           %LOCALHOST.FTP% "
+      echo "# ..detecting f77:           %LOCALHOST.F77% "
+      echo "########"
+    ]]>    
+  </script>  
+  
+  <define name="OLDBASEDIR" value="%BASEDIR%"/>
+  <chbasedir dir="../"/>
+  
+  <!-- define default -->
+  <define name="CLEANCMD" value="echo %OLDBASEDIR% must be manually removed"/>
+
+  <!-- for interactivity - turn off with -noinput option -->
+  <input name="CLEANCMD" msg="Clean up command [none]:"/>
+  
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      %CLEANCMD%
+    ]]>    
+  </script> 
+</securerun>

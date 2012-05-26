@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<securerun
+  name="test.startadc" 
+  basedir="./TEST_%PROCID%"
+  tmpdir="./TEST_%PROCID%/oO0tmp0Oo"
+  prefs="-verbose_level:1;-create_dirs:1"> 
+  
+  <!-- save STDOUT of script to macro using "name" attribute -->
+  <script name="TEST.OUT" cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo ...ok
+    ]]>
+  </script>
+
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo "Testing Securerun: %TEST.OUT%"
+    ]]>    
+  </script>  
+</securerun>
