@@ -1,4 +1,7 @@
-For right now, it is best to compile what is in berun/HTML-Parser-3.31, and have that lib available.  Later on, berun will accept some environmental variable pointing to the local HTML::Parser libs.  This is all in an attempt to allow this to be run standalone by users who do not have the right to install perl modules.
+For right now, it is best to compile what is in berun/HTML-Parser-3.31, and have that 
+lib available.  Later on, berun will accept some environmental variable pointing to 
+the local HTML::Parser libs.  This is all in an attempt to allow this to be run standalone 
+by users who do not have the right to install perl modules.
 
 Instructions:
 cd berun/HTML-Parser-3.31

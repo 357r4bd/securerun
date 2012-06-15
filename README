@@ -8,6 +8,8 @@ XML was a poor choice for the configuration "script" format, but such is life.
 These files were extracted from HEAD in an old CVS repo I had backed up, but no history is retained from before the
 import. I may make changes, but this is really just to put the reference implementation on the record.
 
+CVS HEAD -> # $Revision: 1.136 $ $Date: 2004/03/11 23:47:59 $ $Author: estrade $
+
 Abstract:
 
 A method of creating an XML based framework to perform automated forecasting includes sending a file from a local 
