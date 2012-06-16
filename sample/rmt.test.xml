@@ -4,70 +4,98 @@
   basedir="./TEST_%PROCID%" 
   prefs="-verbose_level:1;-create_dirs:1;">
  
-  <!-- 
-  <define name="USER" value="user"/>
-  <define name="RMTHOST" value="host"/>
+  <define name="user" value="estabd"/>
+  <define name="REMOTEHOST1" value="dev1"/>
+  <define name="REMOTEHOST2" value="dev2"/>
   <define name="RMTDIR" value="/tmp"/>
-  -->
+
+  <script cmd="%i %f" interp="SH">
+    <![CDATA[
+      echo   "this is a test..."
+    ]]>    
+  </script> 
   
   <!-- remote test -->
 
-  <script name="TEST.OUT" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+  <script name="TEST.OUT" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
       echo ...ok
     ]]>
   </script>
 
-  <script name="REMOTEHOST.SH" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+  <script name="REMOTEHOST1.SH" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
       which sh
     ]]>
   </script>
-
-  <script name="REMOTEHOST.CSH" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+ 
+  <script name="REMOTEHOST1.CSH" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
       which csh
     ]]>
   </script>
 
-  <script name="REMOTEHOST.FTP" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+  <script name="REMOTEHOST1.FTP" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
       which ftp
     ]]>
   </script>
 
-  <script name="REMOTEHOST.F77" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+  <script name="REMOTEHOST1.GCC" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
-      which f77
+      which gcc
     ]]>
   </script>
 
-  <script name="PLATFORM.UNAME" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+  <script name="PLATFORM.UNAME" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
       uname -a
     ]]>
   </script> 
 
-  <script name="RMTDETAILS" file="%USER%@%RMTHOST%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+  <script name="PLATFORM.HOSTNAME" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      hostname 
+    ]]>
+  </script> 
+
+<!--
+  <script name="PLATFORM.CSUP" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      sudo csup -g -L2 ~/update/ports > /dev/null 2>&1 && echo csup ok
+    ]]>
+  </script> 
+-->
+
+  <script name="PLATFORM.VEE" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
+    <![CDATA[
+      vee=`which vee`
+      if [ -z $vee ]; then
+        #echo vee not installed
+        cd /usr/ports/www/vee && sudo make install BATCH="YES" clean distclean > /dev/null 2>&1  && echo vee has been installed
+      else
+        echo vee is installed
+      fi
+    ]]>
+  </script> 
+
+  <script name="RMTDETAILS" file="%USER%@%REMOTEHOST1%#22:%RMTDIR%/%PROCID%.sh" cmd="%i %f" interp="SH">
     <![CDATA[
       echo   "@@ Macro test (remote)@@:"
       echo   "Script name: $0 ..."
+      echo   "Hostname: %REMOTEHOST.HOSTNAME%"
       echo   "Detected platform (uname -a): %PLATFORM.UNAME%"
-      echo   "..detecting bourne shell: %REMOTEHOST.SH%  "
-      echo   "..detecting c-shell:      %REMOTEHOST.CSH% "
-      echo   "..detecting ftp:          %REMOTEHOST.FTP% "
-      echo   "..detecting f77:          %REMOTEHOST.F77% "
+      echo   "..detecting bourne shell: %REMOTEHOST1.SH%  "
+      echo   "..detecting c-shell:      %REMOTEHOST1.CSH% "
+      echo   "..detecting ftp:          %REMOTEHOST1.FTP% "
+      echo   "..detecting gcc:          %REMOTEHOST1.GCC% "
     ]]>    
   </script>
- 
-  <!-- Test clean up .. local! -->
-    
+
   <script cmd="%i %f" interp="SH">
     <![CDATA[
-      # Clean out %BASEDIR%
-      echo   "cleaning up ..."
-      find %BASEDIR% -type f -exec rm -rf {} \;
-      rm -rf %BASEDIR%
+      #echo %PLATFORM.CSUP%
+      echo %PLATFORM.VEE%
     ]]>    
   </script> 
 </securerun>
