@@ -144,10 +144,15 @@ $|++;                 # turn off buffering
 # Constants
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-use constant YES   => 1;
-use constant NO    => 0;
-use constant TRUE  => 1;
-use constant FALSE => 0;
+use constant {
+    YES          => 1,
+    NO           => 0,
+    TRUE         => 1,
+    FALSE        => 0,
+    EXIT_SUCCESS => 0,
+    EXIT_ERROR   => 1,
+    EXIT_DIE     => 255,
+};
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Version - define version number with CVS keywords for output
@@ -167,12 +172,12 @@ my %SECURERUN = ();
 
 # create reference to hash
 my $SECURERUN = \%SECURERUN;
-$SECURERUN->{CREATE_DIRS}   = 0;                #0 means no, 1 means yes
-                                                # noise levels!
-$SECURERUN->{VERBOSE_LEVEL} = 0;                #0,1,2,4 - where higher is more verbose
-                                                # important variables
-my $HOME                    = ( getpwuid $< )[7];
-$SECURERUN->{HOSTFILE}      = qq{$HOME/.srhosts.def};
+$SECURERUN->{CREATE_DIRS}   = 0;    #0 means no, 1 means yes
+                                    # noise levels!
+$SECURERUN->{VERBOSE_LEVEL} = 0;    #0,1,2,4 - where higher is more verbose
+                                    # important variables
+my $HOME = ( getpwuid $< )[7];
+$SECURERUN->{HOSTFILE} = qq{$HOME/.srhosts.def};
 
 $SECURERUN->{SRTMPDIR}  = getTmpName();
 $SECURERUN->{SRTMPDIR}  = "/tmp/.oO0-securerun$SECURERUN->{SRTMPDIR}-0Oo";
@@ -220,10 +225,10 @@ $PARSER->{SCRIPT_FLAG}         = 0;
 # Assign callback handlers to events
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-$PARSER->handler( 'start'   => \&onStart,   'tagname,attr' );
-$PARSER->handler( 'end'     => \&onEnd,     'tagname' );
-$PARSER->handler( 'text'    => \&onText,    'text' );
-$PARSER->handler( 'comment' => \&onComment, 'text' );
+$PARSER->handler( 'start'       => \&onStart,   'tagname,attr' );
+$PARSER->handler( 'end'         => \&onEnd,     'tagname' );
+$PARSER->handler( 'text'        => \&onText,    'text' );
+$PARSER->handler( 'comment'     => \&onComment, 'text' );
 $PARSER->handler( 'declaration' => undef );
 $PARSER->handler( 'process'     => undef );
 $PARSER->handler( 'default'     => undef );
@@ -326,8 +331,7 @@ sub init {
 
     if ( !$CMDLINEOPTS->{NOSPLASH} ) {
         my $parserVersion = HTML::Parser->VERSION;
-        print
-            "@@~~~\n@@ securerun: [Parent PROCID: $$]\n@@ $VERSION\n@@ Perl $]\n@@ HTML::Parser $parserVersion\n@@~~~\n\n";
+        print "@@~~~\n@@ securerun: [Parent PROCID: $$]\n@@ $VERSION\n@@ Perl $]\n@@ HTML::Parser $parserVersion\n@@~~~\n\n";
     }
 
     #
@@ -369,7 +373,7 @@ sub init {
 
         #  !! POTENTIAL SECURITY VULNERABILITY
         #  !! Should validate that this is just an hash !!
-# TODO... convert to Config::Tiny!!
+        # TODO... convert to YAML!!
         require $SECURERUN->{HOSTFILE};
     }
     else {
@@ -460,7 +464,7 @@ sub touchFile {
 
 # set up for UNIX paths
 sub getParentPath {
-    my $path = $_[0];
+    my $path          = $_[0];
     my @filePathArray = split( "/", $path );
 
     # discard last member
@@ -471,7 +475,7 @@ sub getParentPath {
 
 # set up for UNIX paths
 sub getLastPathMember {
-    my $path = $_[0];
+    my $path          = $_[0];
     my @filePathArray = split( "/", $path );
     showCallerInfo( caller() );
     return pop(@filePathArray);
@@ -1228,8 +1232,7 @@ sub putViaSCP {
     # NEED TO GET STDOUT AND STDERR BACK - how?!
     if ( $scpHash->{VALID} eq 1 ) {
         if ( -x $scpHash->{BIN} ) {
-            $SYSMSG =
-                "Attemping to put local file(s) to remote path $rmtPath using connect string \"$hoststr\":\n $localFile \n";
+            $SYSMSG = "Attemping to put local file(s) to remote path $rmtPath using connect string \"$hoststr\":\n $localFile \n";
             showIfVerbose( $SYSMSG, 1 );
             $retval = qx($scpHash->{BIN} -P $port $scpHash->{FLAGS} $localFile $hoststr:$rmtPath);
         }
@@ -1363,7 +1366,7 @@ sub putfileTagStart {
         # set $PARSER->{PUTFILE_FLAG} = 0 so <pfile> stuff is ignored...
         $PARSER->{PUTFILE_FLAG}        = 0;
         $PARSER->{PUTFILE_SKIP_PFILES} = 1;
-        $SYSMSG = "WARNING: Ignoring <putfile> block because <putfile put=\"NO\"> was detected...\n";
+        $SYSMSG                        = "WARNING: Ignoring <putfile> block because <putfile put=\"NO\"> was detected...\n";
         showIfVerbose( $SYSMSG, 2 );
     }
     showCallerInfo( caller() );
@@ -1432,8 +1435,7 @@ sub pfileTagStart {
                     # Validate newname if contained
                     if ( $PUTFILE_ATTS->{newname} ne '' ) {
                         if ( $PUTFILE_ATTS->{newname} =~ m/\// ) {
-                            warn
-                                "WARNING $PUTFILE_ATTS->{newname} appears to be a directory path and not a filename - $PUTFILE_ATTS->{file} will not be renamed...\n";
+                            warn "WARNING $PUTFILE_ATTS->{newname} appears to be a directory path and not a filename - $PUTFILE_ATTS->{file} will not be renamed...\n";
                             $PUTFILE_ATTS->{newname} = '';
                         }
                     }
@@ -1788,8 +1790,7 @@ sub runfileTagStart {
                     $RUNFILE_ATTS->{name} = $attributes->[0]{name};
                 }
                 else {
-                    warn
-                        "WARNING: <script>/<runfile> detected with invalid \"name\" attribute...resetting to \"STDOUT\"\n";
+                    warn "WARNING: <script>/<runfile> detected with invalid \"name\" attribute...resetting to \"STDOUT\"\n";
                     $RUNFILE_ATTS->{name} = 'STDOUT';
                 }
             }
@@ -1884,8 +1885,7 @@ sub runLocalFile {
                 exit;
             }
             else {
-                warn
-                    "WARNING: Invalid interpretor, $RUNFILE_ATTS->{interp} detected \nfor use on $RUNFILE_ATTS->{file}...\n";
+                warn "WARNING: Invalid interpretor, $RUNFILE_ATTS->{interp} detected \nfor use on $RUNFILE_ATTS->{file}...\n";
             }
         }
         else {
@@ -1953,8 +1953,7 @@ sub runRemoteFile {
                 exit;
             }
             else {
-                warn
-                    "WARNING: Invalid interpretor, $RUNFILE_ATTS->{interp} detected \nfor use on $RUNFILE_ATTS->{file}...\n";
+                warn "WARNING: Invalid interpretor, $RUNFILE_ATTS->{interp} detected \nfor use on $RUNFILE_ATTS->{file}...\n";
             }
         }
         else {
@@ -2007,7 +2006,7 @@ sub scriptTagStart {
     my (@attributes) = $_[0];
     my ($attributes) = \@attributes;
     $PARSER->{SCRIPT_FLAG} = 1;
-    $SCRIPT_ATTS->{keep} = validateYesNo( $attributes->[0]{keep}, 'NO' );
+    $SCRIPT_ATTS->{keep}   = validateYesNo( $attributes->[0]{keep}, 'NO' );
     if ( !defined( $attributes->[0]{file} ) ) {
         $attributes->[0]{file} = "$SECURERUN->{SRTMPDIR}/" . getTmpName();
     }
@@ -2243,8 +2242,7 @@ sub inputTagStart {
                         addToExtraOps( qq($attributes->[0]{name}), $default );
                     }
                     else {
-                        $SYSMSG =
-                            "WARN: Blank STDIN detected from <input/>.  Use <define/> or <undefine/> to reset a macro..\n";
+                        $SYSMSG = "WARN: Blank STDIN detected from <input/>.  Use <define/> or <undefine/> to reset a macro..\n";
                         showIfVerbose( $SYSMSG, 2 );
                     }
                 }
