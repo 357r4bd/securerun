@@ -1,26 +1,22 @@
 This is the reference implementation for USPTO Application 20060265469.
 
-http://appft.uspto.gov/netacgi/nph-Parser?Sect1=PTO2&Sect2=HITOFF&p=1&u=%2Fnetahtml%2FPTO%2Fsearch-bool.html&r=3&f=G&l=50&co1=AND&d=PG01&s1=brett&s2=estrade&OS=brett+AND+estrade&RS=brett+AND+estrade
+These files were extracted from HEAD in an old CVS repo I had backed up,
+but no history is retained from before the import. I may make changes,
+but this is really just to put the reference implementation on the record.
 
-I am posting this because it's been 6 damn years in Limbo. In that time, a lot of shit has changed. In retrospect,
-XML was a poor choice for the configuration "script" format, but such is life.
-
-These files were extracted from HEAD in an old CVS repo I had backed up, but no history is retained from before the
-import. I may make changes, but this is really just to put the reference implementation on the record.
-
-CVS HEAD -> # $Revision: 1.136 $ $Date: 2004/03/11 23:47:59 $ $Author: estrade $
+CVS HEAD -> # $Revision: 1.136 $ $Date: 2004/03/11 23:47:59 $ $Author:
+estrade $
 
 Abstract:
 
-A method of creating an XML based framework to perform automated forecasting includes sending a file from a local 
-host computer to a remote computer, receiving a file at the local host computer from the remote computer, installing 
-the received file on the local host computer, and executing commands on the local host computer and the remote 
-computer. Executing a command on the remote computer includes reading a run file and a host definition file. A 
-framework for interacting between the local host computer and the remote computer is determined based on types of 
-XML tags, the XML tags including at least one of a start of a tag, end of a tag, and text between the start of a tag 
-and the end of a tag. Computer program products for creating an XML based framework to perform automated forecasting
-are also described. 
-
-Enjoy,
-B. Estrade 
-25 May 2012
+A method of creating an XML based framework to perform automated forecasting
+includes sending a file from a local host computer to a remote computer,
+receiving a file at the local host computer from the remote computer,
+installing the received file on the local host computer, and executing commands
+on the local host computer and the remote computer. Executing a command on
+the remote computer includes reading a run file and a host definition file. A
+framework for interacting between the local host computer and the remote
+computer is determined based on types of XML tags, the XML tags including
+at least one of a start of a tag, end of a tag, and text between the start
+of a tag and the end of a tag. Computer program products for creating an
+XML based framework to perform automated forecasting are also described.
