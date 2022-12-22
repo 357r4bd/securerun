@@ -1,4 +1,6 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env perl
+#
+package bin::securerun;
 
 # $Revision: 1.136 $ $Date: 2004/03/11 23:47:59 $ $Author: estrade $
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -92,8 +94,6 @@
 #    Brett D. Estrade <estrade@nrlssc.navy.mil>
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-package SECURERUN;
-
 # BEGIN block - always run first
 BEGIN {
 
@@ -129,6 +129,8 @@ DONE
 
 #use 5.005_02;
 use strict;
+use warnings;
+
 use Getopt::Long;     # used to process commandline options
 use Sys::Hostname;    # for figuring out hostname
 use File::Copy;       # used in copying
@@ -169,7 +171,8 @@ $SECURERUN->{CREATE_DIRS}   = 0;                #0 means no, 1 means yes
                                                 # noise levels!
 $SECURERUN->{VERBOSE_LEVEL} = 0;                #0,1,2,4 - where higher is more verbose
                                                 # important variables
-$SECURERUN->{HOSTFILE}      = '.srhosts.def';
+my $HOME                    = ( getpwuid $< )[7];
+$SECURERUN->{HOSTFILE}      = qq{$HOME/.srhosts.def};
 
 $SECURERUN->{SRTMPDIR}  = getTmpName();
 $SECURERUN->{SRTMPDIR}  = "/tmp/.oO0-securerun$SECURERUN->{SRTMPDIR}-0Oo";
@@ -366,6 +369,7 @@ sub init {
 
         #  !! POTENTIAL SECURITY VULNERABILITY
         #  !! Should validate that this is just an hash !!
+# TODO... convert to Config::Tiny!!
         require $SECURERUN->{HOSTFILE};
     }
     else {

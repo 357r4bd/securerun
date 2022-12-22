@@ -21,27 +21,21 @@
 
   <script name="LOCALHOST.CSH" cmd="%i %f" interp="SH">
     <![CDATA[
+      which perl 
+    ]]>
+  </script>
+
+  <script name="LOCALHOST.PERL" cmd="%i %f" interp="SH">
+    <![CDATA[
       which csh
     ]]>
   </script>
 
-  <script name="LOCALHOST.FTP" cmd="%i %f" interp="SH">
-    <![CDATA[
-      which ftp
-    ]]>
-  </script>
 
-  <script name="LOCALHOST.F77" cmd="%i %f" interp="SH">
-    <![CDATA[
-      which f77
-    ]]>
-  </script>
-
-   <!-- interactive input from user -->
-  <input name="LOCALHOST.SH" msg="Choose Bourne shell [%LOCALHOST.SH%]:"/>
-  <input name="LOCALHOST.CSH" msg="Choose c-shell [%LOCALHOST.CSH%]:"/>
-  <input name="LOCALHOST.FTP" msg="Choose ftp [%LOCALHOST.FTP%]:"/>
-  <input name="LOCALHOST.F77" msg="Choose f77 compiler [%LOCALHOST.F77%]:"/>
+  <!-- interactive input from user -->
+  <input name="LOCALHOST.SH"  msg="Choose Bourne shell [%LOCALHOST.SH%]:"/>
+  <input name="LOCALHOST.CSH" msg="Choose perl [%LOCALHOST.CSH%]:"/>
+  <input name="LOCALHOST.PERL" msg="Choose csh [%LOCALHOST.PERL%]:"/>
   
   <script name="PLATFORM.UNAME" cmd="%i %f" interp="SH">
     <![CDATA[
@@ -95,9 +89,8 @@
       echo "# Testing STDOUT capture: %TEST.OUT%"
       echo "# Detected platform (uname): %PLATFORM.UNAME%"
       echo "# ..detecting bourne shell:  %LOCALHOST.SH%  "
-      echo "# ..detecting c-shell:       %LOCALHOST.CSH% "
-      echo "# ..detecting ftp:           %LOCALHOST.FTP% "
-      echo "# ..detecting f77:           %LOCALHOST.F77% "
+      echo "# ..detecting csh:           %LOCALHOST.CSH% "
+      echo "# ..detecting perl:          %LOCALHOST.PERL%"
       echo "########"
     ]]>    
   </script>  
